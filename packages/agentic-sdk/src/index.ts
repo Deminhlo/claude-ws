@@ -68,8 +68,6 @@ export { createShellService } from './services/shell-process-db-tracking-service
 export {
   createCommandService,
   type CommandInfo,
-  type CommandContent,
-  type ProcessedCommand,
 } from './services/slash-command-listing-service';
 
 // --- Force-create helpers ---

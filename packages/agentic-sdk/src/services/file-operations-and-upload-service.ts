@@ -7,7 +7,7 @@ import fs from 'fs';
 import path from 'path';
 import { rm, rename, mkdir, writeFile, readFile } from 'fs/promises';
 import AdmZip from 'adm-zip';
-import { getContentTypeForExtension } from './file-tree-and-content-service';
+import { getContentTypeForExtension } from './file-mime-and-language-constants';
 import {
   validateRootPath,
   validatePathWithinRoot,
