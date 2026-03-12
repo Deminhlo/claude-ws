@@ -199,28 +199,61 @@ curl -X POST http://localhost:3100/api/attempts \
 ```
 packages/agentic-sdk/
 ├── bin/
-│   └── server-entrypoint.ts            # Entry point, dotenv, graceful shutdown
+│   └── server-entrypoint.ts                 # Entry point, dotenv, graceful shutdown
 └── src/
-    ├── index.ts                        # Public API exports
-    ├── app-factory.ts                  # Wires plugins, services, routes, agent
-    ├── fastify-app-setup.ts            # CORS, multipart, request logging
+    ├── index.ts                             # Public API exports
+    ├── app-factory.ts                       # Wires plugins, services, routes, agent
+    ├── fastify-app-setup.ts                 # CORS, multipart, request logging
     ├── config/
-    │   └── env-config.ts               # Typed env var loading
+    │   └── env-config.ts                    # Typed env var loading
     ├── db/
-    │   ├── database-schema.ts          # Drizzle ORM schema (13 tables)
-    │   ├── database-connection.ts      # SQLite WAL + foreign keys
-    │   └── database-init-tables.ts     # Migrations
+    │   ├── database-schema.ts               # Drizzle ORM schema (13 tables)
+    │   ├── database-connection.ts           # SQLite WAL + foreign keys
+    │   └── database-init-tables.ts          # Migrations
     ├── plugins/
-    │   ├── fastify-auth-plugin.ts      # x-api-key timing-safe auth
+    │   ├── fastify-auth-plugin.ts           # x-api-key timing-safe auth
     │   └── fastify-error-handler-plugin.ts
     ├── agent/
-    │   ├── claude-sdk-agent-provider.ts          # SDK query(), MCP config
-    │   ├── agent-lifecycle-manager.ts            # Start/cancel orchestration
+    │   ├── claude-sdk-agent-provider.ts     # SDK query(), MCP config
+    │   ├── agent-lifecycle-manager.ts       # Start/cancel orchestration
     │   ├── claude-sdk-message-to-output-adapter.ts
     │   └── agent-start-options-and-event-types.ts
-    ├── services/                       # Database + filesystem services
-    ├── routes/                         # Fastify route handlers
-    └── lib/                            # Logger, ID generator, crypto
+    ├── lib/
+    │   ├── pino-logger.ts                   # Structured logging
+    │   ├── nanoid-id-generator.ts           # ID generation
+    │   ├── timing-safe-compare.ts           # Crypto helpers
+    │   ├── content-type-map.ts              # MIME type mapping
+    │   ├── output-formatter.ts              # Response formatting
+    │   ├── session-manager.ts               # Session/conversation state
+    │   └── claude-available-models.ts       # Model registry
+    ├── routes/                              # Domain-organized Fastify routes
+    │   ├── attempts/                        # CRUD, status, alive, answer, question
+    │   ├── projects/                        # CRUD, settings
+    │   ├── tasks/                           # CRUD, reorder, conversation, stats
+    │   ├── checkpoints/                     # CRUD, backfill, fork, rewind
+    │   ├── files/                           # Content, metadata, ops, search, upload
+    │   ├── search/                          # Content grep, file glob, chat history
+    │   ├── shells/                          # Shell session tracking
+    │   ├── uploads/                         # Multipart upload, process, cleanup
+    │   ├── commands/                        # Slash command listing + execution
+    │   ├── auth/                            # API key verification
+    │   ├── agent-factory/                   # Plugin CRUD, discover, import, upload
+    │   │   ├── plugins/                     # Plugin management + file access
+    │   │   └── projects/                    # Project-plugin associations
+    │   ├── attempt-sse-routes.ts            # SSE streaming endpoint
+    │   └── filesystem-routes.ts             # Server filesystem info
+    └── services/                            # Domain-organized business logic
+        ├── attempt/                         # Attempt CRUD, logs, file uploads
+        ├── project/                         # Project CRUD
+        ├── task/                            # Task CRUD, reorder
+        ├── checkpoint/                      # Checkpoint CRUD, rewind ops
+        ├── file/                            # Filesystem read/write
+        ├── search/                          # Content search, file glob
+        ├── shell/                           # Shell process DB tracking
+        ├── command/                         # Slash command listing
+        ├── upload/                          # Tmp file processing, cleanup
+        └── agent-factory/                   # Plugin registry, discovery,
+                                             # dependency management, uploads
 ```
 
 ## Tech Stack
