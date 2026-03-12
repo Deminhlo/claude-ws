@@ -15,7 +15,7 @@ import {
   processDirectory,
   previewDirectory,
   previewDirectoryContents,
-} from './upload-filesystem-helpers.ts';
+} from './upload-filesystem-helpers';
 
 export type { ExtractedItem };
 

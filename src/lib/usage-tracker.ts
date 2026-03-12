@@ -207,7 +207,7 @@ class UsageTracker extends EventEmitter {
     }
 
     if ('duration_api_ms' in result) {
-      stats.durationApiMs += result.duration_api_ms || 0;
+      stats.durationApiMs += (result as any).duration_api_ms || 0;
     }
 
     // Merge model usage (only in success variant)

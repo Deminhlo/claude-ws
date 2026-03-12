@@ -6,7 +6,7 @@ import type { FastifyPluginAsync } from 'fastify';
 import fp from 'fastify-plugin';
 
 const errorHandlerPlugin: FastifyPluginAsync = async (app) => {
-  app.setErrorHandler((error, request, reply) => {
+  app.setErrorHandler((error: any, request, reply) => {
     const statusCode = error.statusCode ?? 500;
 
     // Log at appropriate level

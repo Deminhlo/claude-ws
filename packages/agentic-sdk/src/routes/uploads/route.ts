@@ -4,7 +4,7 @@
 import { FastifyInstance } from 'fastify';
 import { writeFile, mkdir } from 'fs/promises';
 import { join, extname } from 'path';
-import { generateId } from '../../lib/nanoid-id-generator.ts';
+import { generateId } from '../../lib/nanoid-id-generator';
 
 const ALLOWED_TYPES = [
   'image/png', 'image/jpeg', 'image/gif', 'image/webp',

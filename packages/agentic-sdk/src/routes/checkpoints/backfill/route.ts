@@ -4,8 +4,8 @@
  */
 import { FastifyInstance } from 'fastify';
 import { eq } from 'drizzle-orm';
-import * as schema from '../../../db/database-schema.ts';
-import { generateId } from '../../../lib/nanoid-id-generator.ts';
+import * as schema from '../../../db/database-schema';
+import { generateId } from '../../../lib/nanoid-id-generator';
 
 export default async function checkpointBackfillRoute(fastify: FastifyInstance) {
   fastify.post('/api/checkpoints/backfill', async (request, reply) => {

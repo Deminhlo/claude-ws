@@ -3,7 +3,7 @@
  */
 import { FastifyInstance } from 'fastify';
 import { eq, desc } from 'drizzle-orm';
-import * as schema from '../../db/database-schema.ts';
+import * as schema from '../../db/database-schema';
 
 export default async function checkpointListRoute(fastify: FastifyInstance) {
   fastify.get('/api/checkpoints', async (request, reply) => {

@@ -4,7 +4,7 @@
  */
 import { FastifyInstance } from 'fastify';
 import { eq, and, asc, lt, desc } from 'drizzle-orm';
-import * as schema from '../../../../db/database-schema.ts';
+import * as schema from '../../../../db/database-schema';
 
 export default async function taskRunningAttemptRoutes(fastify: FastifyInstance) {
   fastify.get('/api/tasks/:id/running-attempt', async (request, reply) => {

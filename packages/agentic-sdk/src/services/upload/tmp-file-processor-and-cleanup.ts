@@ -4,9 +4,9 @@
  */
 import { mkdir, rename, readdir, stat, unlink } from 'fs/promises';
 import { join, extname } from 'path';
-import * as schema from '../../db/database-schema.ts';
-import { generateId } from '../../lib/nanoid-id-generator.ts';
-import { getContentTypeForExtension } from '../../lib/content-type-map.ts';
+import * as schema from '../../db/database-schema';
+import { generateId } from '../../lib/nanoid-id-generator';
+import { getContentTypeForExtension } from '../../lib/content-type-map';
 
 export interface ProcessedFile {
   id: string;

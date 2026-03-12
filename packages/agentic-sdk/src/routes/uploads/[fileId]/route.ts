@@ -4,7 +4,7 @@
 import { FastifyInstance } from 'fastify';
 import { readFile, readdir, unlink, stat } from 'fs/promises';
 import { join, basename, extname } from 'path';
-import { getContentTypeForExtension } from '../../../lib/content-type-map.ts';
+import { getContentTypeForExtension } from '../../../lib/content-type-map';
 
 function getMimeType(filename: string): string {
   return getContentTypeForExtension(extname(filename));

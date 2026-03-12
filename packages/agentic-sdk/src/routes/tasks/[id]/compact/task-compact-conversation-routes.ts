@@ -4,7 +4,7 @@
  */
 import { FastifyInstance } from 'fastify';
 import { eq, desc, asc } from 'drizzle-orm';
-import * as schema from '../../../../db/database-schema.ts';
+import * as schema from '../../../../db/database-schema';
 
 export default async function taskCompactConversationRoutes(fastify: FastifyInstance) {
   fastify.post('/api/tasks/:id/compact', async (request, reply) => {

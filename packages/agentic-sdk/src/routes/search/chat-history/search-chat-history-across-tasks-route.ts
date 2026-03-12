@@ -3,7 +3,7 @@
  */
 import { FastifyInstance } from 'fastify';
 import { eq, like, or, and, inArray } from 'drizzle-orm';
-import * as schema from '../../../db/database-schema.ts';
+import * as schema from '../../../db/database-schema';
 
 interface ChatHistoryMatch {
   taskId: string;

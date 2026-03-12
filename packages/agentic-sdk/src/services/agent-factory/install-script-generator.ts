@@ -3,7 +3,7 @@
  * Orchestrates generation of installation scripts for all supported package managers and Docker
  * Delegates per-manager script generation to agent-factory-install-script-templates-service
  */
-import type { LibraryDep } from './dependency-extractor-parsers.ts';
+import type { LibraryDep } from './dependency-extractor-parsers';
 import {
   generateNpm,
   generatePnpm,
@@ -12,7 +12,7 @@ import {
   generatePoetry,
   generateCargo,
   generateGo,
-} from './install-script-templates.ts';
+} from './install-script-templates';
 
 export type { LibraryDep };
 

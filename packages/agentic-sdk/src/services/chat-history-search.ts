@@ -2,7 +2,7 @@
  * Chat history search service - full-text search across attempt prompts and assistant logs
  */
 import { eq, like, or, and, inArray } from 'drizzle-orm';
-import * as schema from '../db/database-schema.ts';
+import * as schema from '../db/database-schema';
 
 /** Extract a snippet of text around the matched query (~80 chars of context) */
 function extractMatchSnippet(text: string, queryLower: string): string | null {

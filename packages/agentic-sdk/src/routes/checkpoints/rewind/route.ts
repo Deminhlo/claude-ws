@@ -5,7 +5,7 @@
  */
 import { FastifyInstance } from 'fastify';
 import { eq, and, gte } from 'drizzle-orm';
-import * as schema from '../../../db/database-schema.ts';
+import * as schema from '../../../db/database-schema';
 
 export default async function checkpointRewindRoute(fastify: FastifyInstance) {
   fastify.post('/api/checkpoints/rewind', async (request, reply) => {

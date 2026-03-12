@@ -4,7 +4,7 @@
  */
 import { FastifyInstance } from 'fastify';
 import { eq, desc } from 'drizzle-orm';
-import * as schema from '../../../../db/database-schema.ts';
+import * as schema from '../../../../db/database-schema';
 
 function calculateContextHealth(inputTokens: number, outputTokens: number, contextLimit: number) {
   const totalTokens = inputTokens + outputTokens;

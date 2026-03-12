@@ -10,7 +10,7 @@ import {
   installAgentSet,
   isAgentSetInstalled,
   uninstallAgentSet,
-} from './component-install-copy-helpers.ts';
+} from './component-install-copy-helpers';
 
 interface ProjectSettings {
   selectedComponents: string[];

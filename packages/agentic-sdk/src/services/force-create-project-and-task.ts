@@ -6,7 +6,7 @@
 import { eq, and, desc } from 'drizzle-orm';
 import { mkdir } from 'fs/promises';
 import { join } from 'path';
-import * as schema from '../db/database-schema.ts';
+import * as schema from '../db/database-schema';
 
 /** Sanitize directory name: lowercase, remove special chars, hyphenate spaces */
 export function sanitizeDirName(input: string): string {

@@ -4,7 +4,7 @@
  * POST: Validate an API key and return validity status
  */
 import { FastifyInstance } from 'fastify';
-import { safeCompare } from '../../../lib/timing-safe-compare.ts';
+import { safeCompare } from '../../../lib/timing-safe-compare';
 
 export default async function authVerifyRoute(fastify: FastifyInstance) {
   // GET /api/auth/verify - Check if auth is required (should be accessible without auth)

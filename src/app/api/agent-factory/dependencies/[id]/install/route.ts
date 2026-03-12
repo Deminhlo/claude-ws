@@ -1,5 +1,30 @@
-import { NextRequest } from 'next/server';
-import { proxyToSdk } from '@/lib/sdk-proxy-to-agentic-backend';
+import { NextRequest, NextResponse } from 'next/server';
+import { db } from '@/lib/db';
+import { verifyApiKey, unauthorizedResponse } from '@/lib/api-auth';
+import { createAgentFactoryService } from '@agentic-sdk/services/agent-factory/agent-factory-plugin-registry';
 
-export async function POST(req: NextRequest) { return proxyToSdk(req, 'POST'); }
+const agentFactoryService = createAgentFactoryService(db);
 
+// POST /api/agent-factory/dependencies/:id/install - Install a dependency
+export async function POST(
+  request: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  try {
+    if (!verifyApiKey(request)) {
+      return unauthorizedResponse();
+    }
+
+    const { id } = await params;
+    const result = await agentFactoryService.installDependency(id);
+
+    if (!result) {
+      return NextResponse.json({ error: 'Dependency not found' }, { status: 404 });
+    }
+
+    return NextResponse.json(result);
+  } catch (error) {
+    console.error('Error installing dependency:', error);
+    return NextResponse.json({ error: 'Failed to install dependency' }, { status: 500 });
+  }
+}

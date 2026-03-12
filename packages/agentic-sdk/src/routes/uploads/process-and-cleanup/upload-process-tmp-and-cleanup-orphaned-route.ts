@@ -4,7 +4,7 @@
  */
 import { FastifyInstance } from 'fastify';
 import { join } from 'path';
-import { processAttachments, cleanupOrphanedTempFiles } from '../../../services/upload/tmp-file-processor-and-cleanup.ts';
+import { processAttachments, cleanupOrphanedTempFiles } from '../../../services/upload/tmp-file-processor-and-cleanup';
 
 export default async function uploadProcessAndCleanupRoute(fastify: FastifyInstance) {
   // POST /api/uploads/process — finalize temp uploads into an attempt

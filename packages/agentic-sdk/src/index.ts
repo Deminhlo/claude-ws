@@ -19,21 +19,21 @@ export {
 export { safeCompare } from './lib/timing-safe-compare';
 
 // --- Projects ---
-export { createProjectService } from './services/project-crud';
+export { createProjectService } from './services/project/project-crud';
 
 // --- Tasks ---
-export { createTaskService } from './services/task-crud-and-reorder';
+export { createTaskService } from './services/task/task-crud-and-reorder';
 
 // --- Attempts ---
-export { createAttemptService } from './services/attempts/crud-and-logs';
-export { createUploadService } from './services/attempts/file-upload-storage';
+export { createAttemptService } from './services/attempt/attempt-crud-and-logs';
+export { createUploadService } from './services/attempt/attempt-file-upload-storage';
 
 // --- Checkpoints ---
-export { createCheckpointService } from './services/checkpoints/crud-and-rewind';
+export { createCheckpointService } from './services/checkpoint/checkpoint-crud-and-rewind';
 export { createCheckpointOperationsService } from './services/checkpoints/fork-and-rewind-operations';
 
 // --- Files ---
-export { createFileService } from './services/files/read-write';
+export { createFileService } from './services/file/filesystem-read-write';
 export { createFileOperationsService } from './services/files/operations-and-upload';
 export { createFileContentReadWriteService, type FileContentResult } from './services/files/content-read-write';
 export {
@@ -57,18 +57,18 @@ export {
 } from './services/files/mime-and-language-constants';
 
 // --- Search ---
-export { createSearchService } from './services/content-search-and-file-glob';
+export { createSearchService } from './services/search/content-search-and-file-glob';
 export { createFileSearchService } from './services/files/search-and-content-search';
 export { createChatHistorySearchService } from './services/chat-history-search';
 
 // --- Shells ---
-export { createShellService } from './services/shell-process-db-tracking';
+export { createShellService } from './services/shell/shell-process-db-tracking';
 
 // --- Commands ---
 export {
   createCommandService,
   type CommandInfo,
-} from './services/slash-command-listing';
+} from './services/command/slash-command-listing';
 
 // --- Force-create helpers ---
 export {
@@ -86,7 +86,7 @@ export { createAuthVerificationService } from './services/auth-verification';
 export { createAttemptWorkflowService } from './services/attempts/workflow-tree';
 
 // --- Agent Factory ---
-export { createAgentFactoryService } from './services/agent-factory/plugin-registry';
+export { createAgentFactoryService } from './services/agent-factory/agent-factory-plugin-registry';
 export { createAgentFactoryProjectSyncService } from './services/agent-factory/project-sync-and-install';
 export {
   createAgentFactoryFilesystemService,
