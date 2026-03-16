@@ -1,0 +1,104 @@
+# Docker Compose for Claude WS with separated Admin Panel
+# version: '3.9'
+
+services:
+  # Main Application (Agentic SDK)
+  claude-ws:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: claude-workspace
+    restart: unless-stopped
+    ports:
+      - "8053:8053"
+    env_file:
+      - .env
+
+    environment:
+      # Server Configuration
+      - NODE_ENV=production
+      - PORT=${PORT:-8053}
+
+      # Data Directory
+      - DATA_DIR=/app/data
+
+      # Skip loading .env file (using environment variables from docker-compose)
+      - CLAUDE_WS_USER_CWD=/app
+
+      # Logging (Optional)
+      # - LOG_LEVEL=info
+
+      # Claude Code CLI Path (Optional)
+      # - CLAUDE_PATH=/usr/local/bin/claude
+
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - claude-data:/app/data
+
+    networks:
+      - claude-network
+
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://127.0.0.1:8053/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # Admin Panel (separate service)
+  admin-panel:
+    build:
+      context: ./packages/admin-panel
+      dockerfile: Dockerfile
+    container_name: claude-admin-panel
+    restart: unless-stopped
+    ports:
+      - "3001:3001"
+    env_file:
+      - ./packages/admin-panel/.env
+
+    environment:
+      # Server Configuration
+      - NODE_ENV=production
+      - PORT=3001
+      - HOST=0.0.0.0
+
+      # Admin Panel Configuration
+      - ADMIN_PORT=3001
+      - DATABASE_PATH=/app/data/admin.db
+      - DOCKER_SOCKET_PATH=/var/run/docker.sock
+
+      # Pool Configuration
+      - POOL_SIZE=5
+      - IDLE_TIMEOUT_SECONDS=86400
+
+      # CORS Settings
+      - ALLOWED_ORIGINS=http://localhost:3000,http://localhost:3001
+
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - admin-data:/app/data
+      - /var/run/docker.sock:/var/run/docker.sock
+
+    networks:
+      - claude-network
+
+    depends_on:
+      - claude-ws
+
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://127.0.0.1:3001/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+volumes:
+  claude-data:
+    driver: local
+  admin-data:
+    driver: local
+
+networks:
+  claude-network:
+    driver: bridge
