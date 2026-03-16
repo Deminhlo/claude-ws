@@ -10,7 +10,7 @@ import { createLogger } from '@/lib/logger';
 import { toast } from '@/hooks/use-toast';
 import type { ActiveQuestion } from '@/hooks/use-attempt-questions';
 import { registerOutputHandler } from '@/hooks/use-attempt-socket-output-handler';
-import type { SubagentNode } from '@/lib/workflow-tracker';
+import type { SubagentNode, AgentMessage, TrackedTask } from '@/lib/workflow-tracker';
 
 const log = createLogger('AttemptSocketHook');
 
@@ -145,8 +145,8 @@ export function useAttemptSocket({
 
       store.updateWorkflow(data.attemptId, {
         nodes: newNodes,
-        messages: data.messages as any,
-        tasks: (data.tasks || []) as any,
+        messages: data.messages as AgentMessage[],
+        tasks: (data.tasks || []) as TrackedTask[],
         mode: data.mode,
         summary: data.summary,
       });
