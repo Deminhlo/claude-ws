@@ -66,20 +66,20 @@ export default async function RootLayout({
   return (
     <html lang={locale} suppressHydrationWarning>
       <body
-        className={`${geistSans.variable} ${geistMono.variable} antialiased bg-background text-foreground`}
+        className={`${geistSans.variable} ${geistMono.variable} bg-background text-foreground antialiased`}
       >
-        <NextIntlClientProvider messages={messages}>
-          <ApiKeyProvider>
-            <SocketProvider>
-              <ThemeProvider>
+        <ThemeProvider>
+          <NextIntlClientProvider messages={messages}>
+            <ApiKeyProvider>
+              <SocketProvider>
                 <UnifiedSetupProvider>
                   {children}
                 </UnifiedSetupProvider>
                 <Toaster position="top-right" richColors closeButton />
-              </ThemeProvider>
-            </SocketProvider>
-          </ApiKeyProvider>
-        </NextIntlClientProvider>
+              </SocketProvider>
+            </ApiKeyProvider>
+          </NextIntlClientProvider>
+        </ThemeProvider>
       </body>
     </html>
   );
