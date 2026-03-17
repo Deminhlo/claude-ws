@@ -12,7 +12,7 @@
 /.agent
 #deployment
 .npmrc
-
+skills/
 tmp/
 # testing
 /coverage

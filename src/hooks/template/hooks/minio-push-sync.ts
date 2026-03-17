@@ -12,8 +12,19 @@ function createConcurrencyLimit(concurrency: number) {
     const queue: (() => void)[] = [];
     return function limit<T>(fn: () => Promise<T>): Promise<T> {
         return new Promise((resolve, reject) => {
-            const run = () => { active++; fn().then(resolve, reject).finally(() => { active--; queue.shift()?.(); }); };
-            active < concurrency ? run() : queue.push(run);
+            const run = () => {
+                active++;
+                fn().then(resolve, reject).finally(() => {
+                    active--;
+                    const next = queue.shift();
+                    if (next) next();
+                });
+            };
+            if (active < concurrency) {
+                run();
+            } else {
+                queue.push(run);
+            }
         });
     };
 }
@@ -35,7 +46,7 @@ if (!config.apiBaseUrl) {
 const TMP_DIR = path.join(process.cwd(), ".claude", "tmp");
 const LOCAL_DATA_DIR = ".";
 const STATE_FILE = path.join(TMP_DIR, "local-sync-state.json");
-const IGNORED_DIRS = [".claude", "temp", "node_modules", ".git"];
+const IGNORED_DIRS = [".claude", "temp", "node_modules", ".git", "markdown"];
 
 // Function to create tmp directory
 async function ensureTmpDir() {
@@ -102,35 +113,40 @@ async function scanDirectory(dir: string, fileList: string[] = []) {
                 fileList.push(filePath);
             }
         }
-    } catch (err: any) {
-        if (err.code !== "ENOENT") console.error(`Error reading directory ${dir}:`, err);
+    } catch (err: unknown) {
+        if (err instanceof Error && 'code' in err && err.code !== "ENOENT") console.error(`Error reading directory ${dir}:`, err);
     }
     return fileList;
 }
 
+// ==========================================
+// MAIN SYNC FUNCTION
+// ==========================================
 async function runCheck() {
     await ensureTmpDir(); // Create tmp directory before running
     console.error(`🔍 Starting to scan files in '${LOCAL_DATA_DIR}' and compare with '${STATE_FILE}'...`);
 
-    // Read state file (created by 0-demo-sync-all.ts)
+    // Read state file (created by pull-sync)
     let manifestData: ManifestEntry[] = [];
     try {
         manifestData = JSON.parse(await fs.readFile(STATE_FILE, "utf-8"));
     } catch {
-        console.error(`❌ '${STATE_FILE}' not found. Run sync script (0-demo-sync-all) first!`);
+        console.error(`❌ '${STATE_FILE}' not found. Run pull sync first!`);
         return;
-    }
-
-    // Map key → ManifestEntry for quick lookup
-    const manifestMap = new Map<string, ManifestEntry>();
-    for (const entry of manifestData) {
-        manifestMap.set(entry.key, entry);
     }
 
     const allFiles = await scanDirectory(LOCAL_DATA_DIR);
     if (allFiles.length === 0) {
         console.error(`❌ Directory '${LOCAL_DATA_DIR}' is completely empty!`);
         return;
+    }
+
+    console.error(`\n=================== STEP 2: UPLOAD NEW & CHANGED FILES ===================`);
+
+    // Map key → ManifestEntry for quick lookup
+    const manifestMap = new Map<string, ManifestEntry>();
+    for (const entry of manifestData) {
+        manifestMap.set(entry.key, entry);
     }
 
     let newFiles = 0;
