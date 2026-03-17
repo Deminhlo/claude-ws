@@ -14,6 +14,9 @@
 import { EventEmitter } from 'events';
 import { findClaudePath } from '../cli-query';
 import { createLogger } from '../logger';
+import * as fs from 'fs';
+import * as path from 'path';
+import { homedir } from 'os';
 import { CLISession } from './claude-cli-session-and-pending-question-types';
 import { spawnCLIProcess, sendInitialPrompt } from './claude-cli-process-spawner';
 import { parseCLILine } from './claude-cli-stdout-line-to-provider-event-parser';
@@ -47,7 +50,43 @@ export class ClaudeCLIProvider extends EventEmitter implements Provider {
     });
 
     const session = new CLISession(attemptId, child, outputFormat);
+    if (sessionOptions?.resume) {
+      session.sessionId = sessionOptions.resume;
+    }
     this.sessions.set(attemptId, session);
+
+    // Create session metadata for recon discovery
+    if (child.pid) {
+      try {
+        const sessionsDir = path.join(homedir(), '.claude', 'sessions');
+        if (!fs.existsSync(sessionsDir)) {
+          fs.mkdirSync(sessionsDir, { recursive: true });
+        }
+        const metadataPath = path.join(sessionsDir, `${child.pid}.json`);
+        const metadata = {
+          pid: child.pid,
+          sessionId: session.sessionId || attemptId,
+          startedAt: Date.now(),
+        };
+        fs.writeFileSync(metadataPath, JSON.stringify(metadata, null, 2));
+        log.info({ attemptId, pid: child.pid, metadataPath }, 'Created session metadata for recon');
+
+        // Clean up on exit
+        child.on('exit', () => {
+          try {
+            if (fs.existsSync(metadataPath)) {
+              fs.unlinkSync(metadataPath);
+              log.info({ attemptId, metadataPath }, 'Removed session metadata');
+            }
+          } catch (e) {
+            log.warn({ attemptId, err: e }, 'Failed to remove session metadata');
+          }
+        });
+      } catch (e) {
+        log.warn({ attemptId, err: e }, 'Failed to create session metadata for recon');
+      }
+    }
+
     sendInitialPrompt(child, prompt);
 
     let buffer = '';
@@ -88,7 +127,10 @@ export class ClaudeCLIProvider extends EventEmitter implements Provider {
     const parsed = parseCLILine(line, session);
     if (!parsed) return;
 
-    if (parsed.messagePayload.sessionId) session.sessionId = parsed.messagePayload.sessionId;
+    if (parsed.messagePayload.sessionId) {
+      session.sessionId = parsed.messagePayload.sessionId;
+      this.updateSessionMetadata(session, session.sessionId);
+    }
 
     if (parsed.askUserQuestion) {
       const { toolUseId, questions } = parsed.askUserQuestion;
@@ -194,5 +236,34 @@ export class ClaudeCLIProvider extends EventEmitter implements Provider {
 
   override emit<K extends keyof ProviderEventData>(event: K, data: ProviderEventData[K]): boolean {
     return super.emit(event, data);
+  }
+
+  private updateSessionMetadata(session: CLISession, sessionId: string): void {
+    const { child, attemptId } = session;
+    if (!child.pid) return;
+
+    try {
+      const sessionsDir = path.join(homedir(), '.claude', 'sessions');
+      const metadataPath = path.join(sessionsDir, `${child.pid}.json`);
+
+      let startedAt = Date.now();
+      if (fs.existsSync(metadataPath)) {
+        try {
+          const content = fs.readFileSync(metadataPath, 'utf8');
+          const existing = JSON.parse(content);
+          startedAt = existing.startedAt || startedAt;
+        } catch (e) { /* ignore */ }
+      }
+
+      const metadata = {
+        pid: child.pid,
+        sessionId,
+        startedAt,
+      };
+      fs.writeFileSync(metadataPath, JSON.stringify(metadata, null, 2));
+      log.info({ attemptId, sessionId, pid: child.pid, metadataPath }, 'Updated session metadata for recon');
+    } catch (e) {
+      log.warn({ attemptId, err: e }, 'Failed to update session metadata for recon');
+    }
   }
 }

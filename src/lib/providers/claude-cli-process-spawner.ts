@@ -47,22 +47,43 @@ export function spawnCLIProcess(opts: SpawnCLIOptions): ChildProcess {
 
   log.info({ claudePath, argsCount: args.length, attemptId }, 'Spawning CLI process');
 
+  const env = {
+    ...process.env,
+    FORCE_COLOR: '0',
+    NO_COLOR: '1',
+    TERM: 'dumb',
+    PATH: process.platform === 'win32'
+      ? (process.env.PATH || '').split(';').filter(p => {
+        const lp = p.toLowerCase().trim().replace(/\//g, '\\');
+        return !lp.startsWith('c:\\windows') &&
+          !lp.startsWith('c:\\program files (x86)\\windows kits');
+      }).join(';')
+      : `${process.env.PATH}:/opt/homebrew/bin:/usr/local/bin`,
+  };
+
+  const useTmux = process.env.USE_TMUX === 'true';
+  if (useTmux && process.platform !== 'win32') {
+    const sessionName = `cw-${attemptId}`;
+    const tmuxArgs = [
+      'new-session', '-d', '-s', sessionName, '-c', normalizedProjectPath,
+      `${claudePath} ${args.map(a => `"${a.replace(/"/g, '\\"')}"`).join(' ')}`
+    ];
+    log.info({ sessionName }, 'Wrapping in tmux session');
+    const tmuxProcess = spawn('tmux', tmuxArgs, {
+      cwd: normalizedProjectPath,
+      stdio: ['pipe', 'pipe', 'pipe'],
+      env,
+    });
+    setTimeout(() => {
+      spawn('tmux', ['pipe-pane', '-t', sessionName, 'cat'], { stdio: 'ignore' });
+    }, 200);
+    return tmuxProcess;
+  }
+
   return spawn(claudePath, args, {
     cwd: normalizedProjectPath,
     stdio: ['pipe', 'pipe', 'pipe'],
-    env: {
-      ...process.env,
-      FORCE_COLOR: '0',
-      NO_COLOR: '1',
-      TERM: 'dumb',
-      PATH: process.platform === 'win32'
-        ? (process.env.PATH || '').split(';').filter(p => {
-            const lp = p.toLowerCase().trim().replace(/\//g, '\\');
-            return !lp.startsWith('c:\\windows') &&
-              !lp.startsWith('c:\\program files (x86)\\windows kits');
-          }).join(';')
-        : `${process.env.PATH}:/opt/homebrew/bin:/usr/local/bin`,
-    },
+    env,
   });
 }
 
