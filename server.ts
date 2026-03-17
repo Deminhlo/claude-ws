@@ -12,7 +12,9 @@ applyClaudeCodeSettingsFallback();
 // Initialize Anthropic proxy BEFORE importing agent-manager or SDK
 // This redirects all Anthropic API calls through our proxy for token caching
 import { initAnthropicProxy } from './src/lib/anthropic-proxy-setup';
-initAnthropicProxy();
+if (process.env.POOL_MODE !== 'true') {
+  initAnthropicProxy();
+}
 
 // Import logCacheStats from shared cache module for monitoring
 import { logCacheStats } from './src/lib/proxy-token-cache';
@@ -26,6 +28,7 @@ delete process.env.CLAUDECODE;
 
 import { createServer } from 'http';
 import { parse } from 'url';
+import { mkdir } from 'fs/promises';
 import next from 'next';
 import { Server as SocketIOServer } from 'socket.io';
 import { homedir } from 'os';
@@ -50,6 +53,13 @@ import { gitStatsCache } from './src/lib/git-stats-collector';
 import { tunnelService } from './src/lib/tunnel-service';
 
 import { getPort, getHostname } from './src/lib/server-port-configuration';
+import {
+  WorkspacePathError,
+  getProjectIdFromWorkspacePath,
+  getProjectNameFromWorkspacePath,
+  resolveWorkspacePath,
+  validateWorkspaceConfigAtBoot,
+} from './src/lib/workspace-context';
 
 const dev = process.env.NODE_ENV !== 'production';
 const hostname = getHostname();
@@ -57,6 +67,15 @@ const port = getPort();
 
 const app = next({ dev, hostname, port, turbopack: false });
 const handle = app.getRequestHandler();
+
+try {
+  validateWorkspaceConfigAtBoot();
+} catch (error) {
+  if (error instanceof WorkspacePathError) {
+    log.error({ error: error.message }, '[Server] Invalid workspace configuration');
+  }
+  throw error;
+}
 
 app.prepare().then(async () => {
   const httpServer = createServer((req, res) => {
@@ -123,6 +142,72 @@ app.prepare().then(async () => {
   const MAX_TERMINALS_PER_SOCKET = 5;
   const socketTerminals = new Map<string, Set<string>>();
 
+  const sanitizeProjectName = (name: string): string => {
+    const sanitized = name
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9-_]+/g, '-')
+      .replace(/^-+|-+$/g, '');
+    return sanitized || 'project';
+  };
+
+  const buildDefaultProjectPath = (projectId: string, projectName?: string): string => {
+    const basePath = process.env.DATA_DIR || join(userCwd, 'data');
+    const pathSuffix = projectName?.trim() ? sanitizeProjectName(projectName) : projectId;
+    return join(basePath, pathSuffix);
+  };
+
+  const ensureProjectExists = async (options: {
+    workspacePath?: string;
+    projectId?: string;
+    projectName?: string;
+  }) => {
+    const hasProjectId = !!options.projectId?.trim();
+    const resolvedProjectId = options.projectId?.trim() || (options.workspacePath ? getProjectIdFromWorkspacePath(options.workspacePath) : '');
+    const resolvedProjectName =
+      options.projectName?.trim() ||
+      (options.workspacePath ? getProjectNameFromWorkspacePath(options.workspacePath) : resolvedProjectId || 'workspace');
+
+    if (!resolvedProjectId) {
+      throw new Error('projectId or workspacePath is required');
+    }
+
+    let project = await db.query.projects.findFirst({
+      where: eq(schema.projects.id, resolvedProjectId),
+    });
+    if (project) return project;
+
+    let resolvedWorkspacePath = options.workspacePath;
+    if (resolvedWorkspacePath) {
+      project = await db.query.projects.findFirst({
+        where: eq(schema.projects.path, resolvedWorkspacePath),
+      });
+      if (project) return project;
+    } else if (hasProjectId) {
+      resolvedWorkspacePath = buildDefaultProjectPath(resolvedProjectId, options.projectName);
+    }
+
+    if (!resolvedWorkspacePath) {
+      throw new Error('workspacePath could not be resolved');
+    }
+    await mkdir(resolvedWorkspacePath, { recursive: true });
+
+    await db.insert(schema.projects).values({
+      id: resolvedProjectId,
+      name: resolvedProjectName,
+      path: resolvedWorkspacePath,
+      createdAt: Date.now(),
+    });
+
+    project = await db.query.projects.findFirst({
+      where: eq(schema.projects.id, resolvedProjectId),
+    });
+    if (!project) {
+      throw new Error(`Failed to initialize project ${resolvedProjectId}`);
+    }
+    return project;
+  };
+
   // Socket.io connection handler
   io.on('connection', (socket) => {
     log.info(`Client connected: ${socket.id}`);
@@ -135,11 +220,12 @@ app.prepare().then(async () => {
         prompt: string;
         displayPrompt?: string;
         fileIds?: string[];
+        attachments?: string[];
         force_create?: boolean;
         projectId?: string;
         projectName?: string;
+        path?: string;
         taskTitle?: string;
-        projectRootPath?: string;
         outputFormat?: 'json' | 'html' | 'markdown' | 'yaml' | 'raw' | 'custom';
         outputSchema?: string;
         model?: string;  // Optional: model ID for this attempt
@@ -148,16 +234,18 @@ app.prepare().then(async () => {
           taskId,
           prompt,
           displayPrompt,
-          fileIds = [],
+          fileIds: incomingFileIds = [],
+          attachments = [],
           force_create,
           projectId,
           projectName,
+          path,
           taskTitle,
-          projectRootPath,
           outputFormat,
           outputSchema,
           model
         } = data;
+        const fileIds = incomingFileIds.length > 0 ? incomingFileIds : attachments;
 
         log.info({
           taskId,
@@ -165,8 +253,8 @@ app.prepare().then(async () => {
           force_create,
           projectId,
           projectName,
+          path,
           taskTitle,
-          projectRootPath,
           outputFormat,
           hasOutputSchema: !!outputSchema
         }, '[Socket] attempt:start received');
@@ -179,76 +267,17 @@ app.prepare().then(async () => {
           // Handle force_create logic
           if (force_create && !task) {
             log.info('[Socket] Task not found, force_create=true');
-
-            if (!projectId) {
-              socket.emit('error', { message: 'projectId required' });
-              return;
-            }
-
-            // Check if project exists
-            let project = await db.query.projects.findFirst({
-              where: eq(schema.projects.id, projectId),
-            });
-
-            log.info({ exists: !!project }, '[Socket] Project exists?');
-
-            // Create project if it doesn't exist
-            if (!project) {
-              log.info('[Socket] Project does not exist, checking projectName...');
-              log.info({ projectName }, '[Socket] projectName value');
-
-              if (!projectName || projectName.trim() === '') {
-                log.info('[Socket] Project name required but not provided');
-                socket.emit('error', { message: 'projectName required' });
-                return;
-              }
-
-              // Create project directory and record
-              const { mkdir } = await import('fs/promises');
-              const { join } = await import('path');
-
-              const projectDirName = `${projectId}-${projectName}`;
-              const projectPath = projectRootPath
-                ? join(projectRootPath, projectDirName)
-                : join(userCwd, 'data', 'projects', projectDirName);
-
-              try {
-                await mkdir(projectPath, { recursive: true });
-                log.info({ projectPath }, '[Socket] Created project directory');
-              } catch (mkdirError: any) {
-                if (mkdirError?.code !== 'EEXIST') {
-                  log.error({ mkdirError }, '[Socket] Failed to create project folder');
-                  socket.emit('error', { message: 'Failed to create project folder: ' + mkdirError.message });
-                  return;
-                }
-              }
-
-              try {
-                await db.insert(schema.projects).values({
-                  id: projectId,
-                  name: projectName,
-                  path: projectPath,
-                  createdAt: Date.now(),
-                });
-                log.info({ projectId }, '[Socket] Created project');
-              } catch (error) {
-                log.error({ error }, '[Socket] Failed to create project');
-                socket.emit('error', { message: 'Failed to create project' });
-                return;
-              }
-
-              // Project created, fetch it
-              project = await db.query.projects.findFirst({
-                where: eq(schema.projects.id, projectId),
+            let project;
+            if (projectId?.trim()) {
+              project = await ensureProjectExists({ projectId, projectName, workspacePath: path });
+            } else {
+              const workspace = await resolveWorkspacePath(path);
+              project = await ensureProjectExists({
+                workspacePath: workspace.path,
+                projectName,
               });
             }
-
-            // Check taskTitle
-            if (!taskTitle || taskTitle.trim() === '') {
-              log.info('[Socket] Task title required but not provided');
-              socket.emit('error', { message: 'taskTitle required' });
-              return;
-            }
+            const resolvedTaskTitle = taskTitle?.trim() || 'Quick task';
 
             // Create task
             const { and, desc } = await import('drizzle-orm');
@@ -259,7 +288,7 @@ app.prepare().then(async () => {
               .from(schema.tasks)
               .where(
                 and(
-                  eq(schema.tasks.projectId, projectId),
+                  eq(schema.tasks.projectId, project.id),
                   eq(schema.tasks.status, 'todo')
                 )
               )
@@ -271,8 +300,8 @@ app.prepare().then(async () => {
             try {
               await db.insert(schema.tasks).values({
                 id: taskId,
-                projectId,
-                title: taskTitle,
+                projectId: project.id,
+                title: resolvedTaskTitle,
                 description: null,
                 status: 'todo',
                 position,
@@ -302,13 +331,20 @@ app.prepare().then(async () => {
           }
 
           // Get project info
-          const project = await db.query.projects.findFirst({
+          let project = await db.query.projects.findFirst({
             where: eq(schema.projects.id, task.projectId),
           });
 
           if (!project) {
-            socket.emit('error', { message: 'Project not found' });
-            return;
+            if (path?.trim()) {
+              const workspace = await resolveWorkspacePath(path);
+              project = await ensureProjectExists({
+                workspacePath: workspace.path,
+                projectId: task.projectId,
+              });
+            } else {
+              project = await ensureProjectExists({ projectId: task.projectId });
+            }
           }
 
           // Get session options for conversation continuation
@@ -372,6 +408,10 @@ app.prepare().then(async () => {
           io.emit('task:started', { taskId });
         } catch (error) {
           log.error({ error }, 'Error starting attempt');
+          if (error instanceof WorkspacePathError) {
+            socket.emit('error', { message: error.message });
+            return;
+          }
           socket.emit('error', {
             message: error instanceof Error ? error.message : 'Unknown error',
           });
@@ -499,13 +539,12 @@ app.prepare().then(async () => {
             }
 
             // Look up the project to get path
-            const project = await db.query.projects.findFirst({
+            let project = await db.query.projects.findFirst({
               where: eq(schema.projects.id, task.projectId),
             });
 
             if (!project) {
-              socket.emit('error', { message: 'Project not found for auto-retry' });
-              return;
+              project = await ensureProjectExists({ projectId: task.projectId });
             }
 
             // Get session options for conversation continuation
@@ -578,10 +617,12 @@ app.prepare().then(async () => {
         });
         if (!task) { socket.emit('error', { message: 'Task not found' }); return; }
 
-        const project = await db.query.projects.findFirst({
+        let project = await db.query.projects.findFirst({
           where: eq(schema.projects.id, task.projectId),
         });
-        if (!project) { socket.emit('error', { message: 'Project not found' }); return; }
+        if (!project) {
+          project = await ensureProjectExists({ projectId: task.projectId });
+        }
 
         const conversationSummary = await sessionManager.getConversationSummary(compactTaskId);
 

@@ -30,6 +30,7 @@ const sqlite = new Database(DB_PATH);
 
 // Enable WAL mode for better concurrency
 sqlite.pragma('journal_mode = WAL');
+sqlite.pragma('busy_timeout = 5000');
 
 // Enable foreign key constraints (required for CASCADE deletes to work)
 sqlite.pragma('foreign_keys = ON');
@@ -303,7 +304,9 @@ export function initDb() {
   `);
 }
 
-// Initialize on first import
-initDb();
+// Skip schema writes during Next.js build to avoid concurrent SQLite lock contention.
+if (process.env.CLAUDE_WS_SKIP_DB_INIT !== '1') {
+  initDb();
+}
 
 export { schema };

@@ -333,13 +333,10 @@ export class ClaudeSDKProvider extends EventEmitter implements Provider {
         },
       };
 
-      // Build a clean env for the subprocess:
-      // - Remove proxy ANTHROPIC_BASE_URL (subprocess uses OAuth directly)
-      // - Remove CLAUDECODE to prevent nested session detection
-      // - Remove CLAUDE_CODE_ENTRYPOINT so SDK sets it to 'sdk-ts'
+      // Build a clean env for the subprocess.
+      // Keep ANTHROPIC_* variables so SDK mode can use custom API endpoints.
+      // Only remove variables that break nested Claude Code invocation.
       const subprocessEnv = { ...process.env };
-      delete subprocessEnv.ANTHROPIC_BASE_URL;
-      delete subprocessEnv.ANTHROPIC_PROXIED_BASE_URL;
       delete subprocessEnv.CLAUDECODE;
       delete subprocessEnv.CLAUDE_CODE_ENTRYPOINT;
 

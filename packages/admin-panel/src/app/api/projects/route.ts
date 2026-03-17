@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { nanoid } from 'nanoid';
-import { eq, sql, desc } from 'drizzle-orm';
+import { and, desc, eq, sql, type SQL } from 'drizzle-orm';
 
 import { db } from '@/lib/db';
-import { poolProjects, containerPool, poolProjectActivityLog } from '@/lib/db/schema';
+import { poolProjects, poolProjectActivityLog } from '@/lib/db/schema';
 import { containerPoolManager } from '@/lib/container-pool-manager';
 import { verifyApiKey, unauthorizedResponse } from '@/lib/api-auth';
 import { createLogger } from '@/lib/logger';
@@ -29,7 +29,7 @@ export async function GET(request: NextRequest) {
     const offset = (page - 1) * limit;
 
     // Build conditions
-    const conditions = [];
+    const conditions: SQL[] = [];
     if (status) {
       conditions.push(eq(poolProjects.status, status));
     }
@@ -39,7 +39,7 @@ export async function GET(request: NextRequest) {
 
     // Get projects
     const allProjects = await db.query.poolProjects.findMany({
-      where: conditions.length > 0 ? eq(poolProjects.status, status as any) : undefined,
+      where: conditions.length > 0 ? and(...conditions) : undefined,
       orderBy: [desc(poolProjects.createdAt)],
     });
 
@@ -92,7 +92,7 @@ export async function POST(request: NextRequest) {
 
     // Create project record
     const projectId = nanoid();
-    const now = Date.now();
+    const now = new Date();
     const projectData = {
       id: projectId,
       name,
@@ -100,23 +100,31 @@ export async function POST(request: NextRequest) {
       idleTimeoutSeconds: config?.idle_timeout_seconds || 86400,
       memoryLimit: config?.memory_limit || null,
       cpuLimit: config?.cpu_limit || null,
-      dataPath: `/app/data/projects/${projectId}-${name}`,
-      status: 'allocated',
+      dataPath: '/app/data/pending',
+      status: 'starting',
       createdAt: now,
       lastActivityAt: now,
     };
 
     await db.insert(poolProjects).values(projectData);
 
-    // Allocate container
-    const allocation = await containerPoolManager.allocateContainer(projectId, name);
+    let allocation: Awaited<ReturnType<typeof containerPoolManager.allocateContainer>>;
+    try {
+      // Allocate container + initialize project in container
+      allocation = await containerPoolManager.allocateContainer(projectId, name);
+    } catch (allocationError) {
+      await db.delete(poolProjects).where(eq(poolProjects.id, projectId));
+      throw allocationError;
+    }
 
     // Log activity
     await db.insert(poolProjectActivityLog).values({
+      id: nanoid(),
       projectId,
       containerId: allocation.container_id,
       action: 'created',
       details: JSON.stringify({ ...projectData, ...allocation }),
+      timestamp: now,
       performedBy: 'admin',
       performedAt: now,
     });
@@ -129,7 +137,7 @@ export async function POST(request: NextRequest) {
       container_port: allocation.port,
       status: 'allocated',
       access_url: allocation.access_url,
-      created_at: new Date(now).toISOString(),
+      created_at: now.toISOString(),
     });
   } catch (error) {
     log.error('Failed to create project:', String(error));

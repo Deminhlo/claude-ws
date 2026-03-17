@@ -6,7 +6,7 @@
  */
 
 import { db } from '@/lib/db';
-import { poolProjects, containerPool } from '@/lib/db/schema';
+import { poolProjects } from '@/lib/db/schema';
 import { containerPoolManager } from '@/lib/container-pool-manager';
 import { lt } from 'drizzle-orm';
 import { createLogger } from '@/lib/logger';

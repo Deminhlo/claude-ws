@@ -1,10 +1,10 @@
 "use client";
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Plus, Activity, Container, Server, Clock, TrendingUp } from "lucide-react";
+import { Activity, Container, Server, Clock, TrendingUp } from "lucide-react";
 import { useEffect, useState } from "react";
+import { CreateProjectModal } from "@/components/admin/create-project-modal";
 
 interface PoolStatus {
   total: number;
@@ -16,15 +16,22 @@ interface PoolStatus {
 interface Project {
   id: string;
   name: string;
+  description?: string | null;
+  containerId?: string;
   container_id?: string;
+  containerPort?: number;
   container_port?: number;
+  dataPath?: string;
+  data_path?: string;
   status: string;
-  created_at: string;
-  last_activity_at: string;
+  createdAt?: string;
+  created_at?: string;
+  lastActivityAt?: string;
+  last_activity_at?: string;
 }
 
 interface DashboardData {
-  poolStatus: PoolStatus;
+  pool_status: PoolStatus;
   projects: Project[];
 }
 
@@ -60,7 +67,7 @@ export default function AdminDashboardPage() {
     );
   }
 
-  const poolStatus = dashboardData?.poolStatus || { total: 5, idle: 3, allocated: 2, stopping: 0 };
+  const poolStatus = dashboardData?.pool_status || { total: 0, idle: 0, allocated: 0, stopping: 0 };
   const projects = dashboardData?.projects || [];
 
   return (
@@ -74,10 +81,7 @@ export default function AdminDashboardPage() {
             </h1>
             <p className="text-gray-600 mt-2">Docker Pool Management System</p>
           </div>
-          <Button className="gap-2 shadow-lg">
-            <Plus className="w-4 h-4" />
-            New Project
-          </Button>
+          <CreateProjectModal onProjectCreated={fetchDashboardData} />
         </div>
 
         {/* Pool Status Cards */}
@@ -140,39 +144,47 @@ export default function AdminDashboardPage() {
               <p className="text-center text-gray-500 py-8">No active projects</p>
             ) : (
               <div className="space-y-4">
-                {projects.map((project) => (
-                  <div
-                    key={project.id}
-                    className="flex items-center justify-between p-4 bg-white/50 rounded-lg hover:bg-white/70 transition-colors animate-slideIn"
-                  >
-                    <div className="flex items-center gap-4">
-                      <div className="w-10 h-10 rounded-full bg-gradient-to-r from-purple-500 to-pink-500 flex items-center justify-center text-white font-semibold">
-                        {project.name.charAt(0).toUpperCase()}
+                {projects.map((project) => {
+                  const containerId = project.container_id || project.containerId || 'N/A';
+                  const containerPort = project.container_port ?? project.containerPort ?? 'N/A';
+                  const folderPath = project.data_path || project.dataPath || 'N/A';
+                  const lastActivity = project.last_activity_at || project.lastActivityAt || '';
+                  const accessPath = `/api/gateway/${project.id}`;
+
+                  return (
+                    <div
+                      key={project.id}
+                      className="flex items-center justify-between p-4 bg-white/50 rounded-lg hover:bg-white/70 transition-colors animate-slideIn"
+                    >
+                      <div className="flex items-center gap-4">
+                        <div className="w-10 h-10 rounded-full bg-gradient-to-r from-purple-500 to-pink-500 flex items-center justify-center text-white font-semibold">
+                          {project.name.charAt(0).toUpperCase()}
+                        </div>
+                        <div>
+                          <h3 className="font-semibold text-gray-900">{project.name}</h3>
+                          <p className="text-sm text-gray-600">Project ID: {project.id}</p>
+                          <p className="text-sm text-gray-600">Container: {containerId}</p>
+                          <p className="text-sm text-gray-600">Port: {containerPort}</p>
+                          <p className="text-sm text-gray-600">Folder: {folderPath}</p>
+                          <p className="text-sm text-gray-600">Gateway: {accessPath}</p>
+                        </div>
                       </div>
-                      <div>
-                        <h3 className="font-semibold text-gray-900">{project.name}</h3>
-                        <p className="text-sm text-gray-600">
-                          Container: {project.container_id || 'N/A'}
-                        </p>
+                      <div className="flex items-center gap-4">
+                        <Badge
+                          variant="outline"
+                          className={
+                            project.status === 'allocated'
+                              ? 'bg-green-100 text-green-800 border-green-300'
+                              : 'bg-gray-100 text-gray-800 border-gray-300'
+                          }
+                        >
+                          {project.status}
+                        </Badge>
+                        <span className="text-sm text-gray-600">{formatLastActivity(lastActivity)}</span>
                       </div>
                     </div>
-                    <div className="flex items-center gap-4">
-                      <Badge
-                        variant="outline"
-                        className={
-                          project.status === 'allocated'
-                            ? 'bg-green-100 text-green-800 border-green-300'
-                            : 'bg-gray-100 text-gray-800 border-gray-300'
-                        }
-                      >
-                        {project.status}
-                      </Badge>
-                      <span className="text-sm text-gray-600">
-                        {formatLastActivity(project.last_activity_at)}
-                      </span>
-                    </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </CardContent>
@@ -183,7 +195,9 @@ export default function AdminDashboardPage() {
 }
 
 function formatLastActivity(dateString: string): string {
+  if (!dateString) return 'N/A';
   const date = new Date(dateString);
+  if (Number.isNaN(date.getTime())) return 'N/A';
   const now = new Date();
   const diffMs = now.getTime() - date.getTime();
   const diffMins = Math.floor(diffMs / 60000);

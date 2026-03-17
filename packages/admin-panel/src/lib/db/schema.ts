@@ -21,8 +21,15 @@ export const poolProjects = sqliteTable('pool_projects', {
 export const containerPool = sqliteTable('container_pool', {
   id: text('id').primaryKey(),
   containerId: text('container_id').notNull().unique(),
+  containerPort: integer('container_port').notNull(),
   status: text('status').notNull().default('idle'),
+  projectId: text('project_id'),
+  allocatedAt: integer('allocated_at', { mode: 'timestamp' }),
+  healthStatus: text('health_status').default('healthy'),
+  errorMessage: text('error_message'),
   createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
+  updatedAt: integer('updated_at', { mode: 'timestamp' }),
+  lastHealthCheck: integer('last_health_check', { mode: 'timestamp' }),
   lastActivityAt: integer('last_activity_at', { mode: 'timestamp' }),
 });
 
@@ -30,7 +37,10 @@ export const containerPool = sqliteTable('container_pool', {
 export const poolProjectActivityLog = sqliteTable('pool_project_activity_log', {
   id: text('id').primaryKey(),
   projectId: text('project_id').notNull(),
+  containerId: text('container_id'),
   action: text('action').notNull(),
   details: text('details'),
   timestamp: integer('timestamp', { mode: 'timestamp' }).notNull(),
+  performedBy: text('performed_by'),
+  performedAt: integer('performed_at', { mode: 'timestamp' }).notNull(),
 });

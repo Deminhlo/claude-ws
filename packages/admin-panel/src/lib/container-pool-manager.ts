@@ -1,10 +1,13 @@
 import Docker from 'dockerode';
-import { promises as fs } from 'fs';
+import BetterSqlite3 from 'better-sqlite3';
+import { mkdirSync, promises as fs } from 'fs';
 import path from 'path';
+import { nanoid } from 'nanoid';
+import net from 'node:net';
 
 import { db } from '@/lib/db';
-import { containerPool, projects, projectActivityLog } from '@/lib/schema/pool-management';
-import { eq } from 'drizzle-orm';
+import { containerPool, poolProjects, poolProjectActivityLog } from '@/lib/db/schema';
+import { eq, sql } from 'drizzle-orm';
 import { createLogger } from '@/lib/logger';
 
 const log = createLogger('ContainerPoolManager');
@@ -30,6 +33,7 @@ export interface AllocationResult {
   container_id: string;
   port: number;
   access_url: string;
+  data_path: string;
 }
 
 export class ContainerPoolManager {
@@ -48,10 +52,44 @@ export class ContainerPoolManager {
     log.info(`Allocating container for project: ${projectId}`);
 
     // 1. Find idle container from pool
-    const poolContainer = await db.query.containerPool.findFirst({
+    let poolContainer = await db.query.containerPool.findFirst({
       where: eq(containerPool.status, 'idle'),
-      orderBy: (containerPool, { asc }) => [containerPool.createdAt],
+      orderBy: [containerPool.createdAt],
     });
+
+    // Remove stale/invalid idle entries until we get a startable container.
+    while (poolContainer) {
+      if (await this.isContainerMissing(poolContainer.containerId)) {
+        log.warn(`Stale idle container record found: ${poolContainer.containerId}. Removing from pool DB.`);
+        await db.delete(containerPool).where(eq(containerPool.containerId, poolContainer.containerId));
+        poolContainer = await db.query.containerPool.findFirst({
+          where: eq(containerPool.status, 'idle'),
+          orderBy: [containerPool.createdAt],
+        });
+        continue;
+      }
+
+      try {
+        const warmContainer = this.docker.getContainer(poolContainer.containerId);
+        const inspectResult = await warmContainer.inspect();
+        if (!inspectResult.State.Running) {
+          await warmContainer.start();
+        }
+        break;
+      } catch (error) {
+        if (this.isPortAlreadyAllocatedError(error)) {
+          log.warn(`Idle container ${poolContainer.containerId} cannot start due to occupied port ${poolContainer.containerPort}. Removing stale container and retrying.`);
+          await this.removeContainerIfExists(poolContainer.containerId);
+          await db.delete(containerPool).where(eq(containerPool.containerId, poolContainer.containerId));
+          poolContainer = await db.query.containerPool.findFirst({
+            where: eq(containerPool.status, 'idle'),
+            orderBy: [containerPool.createdAt],
+          });
+          continue;
+        }
+        throw error;
+      }
+    }
 
     if (!poolContainer) {
       throw new Error('POOL_EXHAUSTED: No idle containers available in pool');
@@ -59,83 +97,69 @@ export class ContainerPoolManager {
 
     log.info(`Found idle container: ${poolContainer.containerId}`);
 
-    // 2. Sanitize project name for filesystem
-    const sanitizedName = this.sanitizeFilename(projectName);
-    const dataPath = path.join(this.config.storage.basePath, `${projectId}-${sanitizedName}`);
+    // 2. Use pre-mounted slot directory associated with this container.
+    const dataPath = this.getContainerMountPath(poolContainer.containerId);
+    await this.prepareDataPath(dataPath);
 
-    // 3. Create project data directory
-    await fs.mkdir(dataPath, { recursive: true });
-    await fs.mkdir(path.join(dataPath, 'files'), { recursive: true });
-    await fs.mkdir(path.join(dataPath, 'checkpoints'), { recursive: true });
+    // 3. Start sleeping container instead of recreating with new bind mount.
+    const warmContainer = this.docker.getContainer(poolContainer.containerId);
+    await this.ensureContainerNetworkAttached(poolContainer.containerId);
 
-    log.info(`Created project data directory: ${dataPath}`);
-
-    // 4. Stop and remove existing container
+    let projectWorkspaceHostPath: string;
     try {
-      const existingContainer = this.docker.getContainer(poolContainer.containerId);
-      await existingContainer.stop();
-      await existingContainer.remove();
+      projectWorkspaceHostPath = await this.updateContainerProjectInDb(dataPath, projectId, projectName);
     } catch (error) {
-      log.warn(`Failed to stop existing container: ${error}`);
+      try {
+        await warmContainer.stop({ t: 5 });
+      } catch {
+        // Ignore stop errors after failed initialization.
+      }
+      throw error;
     }
 
-    // 5. Start container with project data mounted
-    const newContainer = await this.docker.createContainer({
-      Image: this.config.pool.image,
-      name: poolContainer.containerId,
-      ExposedPorts: { '8053/tcp': {} },
-      HostConfig: {
-        PortBindings: { '8053/tcp': [{ HostPort: String(poolContainer.containerPort) }] },
-        Binds: [`${dataPath}:/app/data`],
-        RestartPolicy: { Name: 'unless-stopped' },
-      },
-      Env: [
-        'NODE_ENV=production',
-        'PORT=8053',
-        'DATA_DIR=/app/data',
-        `PROJECT_ID=${projectId}`,
-        `PROJECT_NAME=${sanitizedName}`,
-      ],
-      Labels: {
-        'claude-ws.project': projectId,
-        'claude-ws.managed': 'true',
-      },
-    });
-
-    await newContainer.start();
-
-    log.info(`Started container ${poolContainer.containerId} with project data`);
+    log.info(`Started warmed container ${poolContainer.containerId} for project ${projectId}`);
 
     // 6. Update database
-    await db.transaction(async (tx) => {
-      await tx
-        .update(projects)
+    db.transaction((tx) => {
+      tx
+        .update(poolProjects)
         .set({
-          container_id: poolContainer.containerId,
-          container_port: poolContainer.containerPort,
+          containerId: poolContainer.containerId,
+          containerPort: poolContainer.containerPort,
           status: 'allocated',
-          data_path: dataPath,
-          last_activity_at: new Date(),
+          dataPath: projectWorkspaceHostPath,
+          lastActivityAt: new Date(),
         })
-        .where(eq(projects.id, projectId));
+        .where(eq(poolProjects.id, projectId))
+        .run();
 
-      await tx
+      tx
         .update(containerPool)
         .set({
           status: 'allocated',
-          project_id: projectId,
-          allocated_at: new Date(),
+          projectId,
+          allocatedAt: new Date(),
+          updatedAt: new Date(),
         })
-        .where(eq(containerPool.containerId, poolContainer.containerId));
+        .where(eq(containerPool.containerId, poolContainer.containerId))
+        .run();
 
       // Log activity
-      await tx.insert(projectActivityLog).values({
-        project_id: projectId,
-        container_id: poolContainer.containerId,
+      tx.insert(poolProjectActivityLog).values({
+        id: nanoid(),
+        projectId,
+        containerId: poolContainer.containerId,
         action: 'allocated',
-        details: { data_path: dataPath, allocation_time_ms: Date.now() },
-        performed_by: 'system',
-      });
+        details: JSON.stringify({
+          containerDataPath: dataPath,
+          projectWorkspaceHostPath,
+          projectName,
+          allocationTimeMs: Date.now(),
+        }),
+        timestamp: new Date(),
+        performedBy: 'system',
+        performedAt: new Date(),
+      }).run();
     });
 
     // 7. Trigger pool replenishment asynchronously
@@ -146,7 +170,8 @@ export class ContainerPoolManager {
     return {
       container_id: poolContainer.containerId,
       port: poolContainer.containerPort,
-      access_url: `http://pool-${poolContainer.containerId.split('-')[2]}.claude-ws.local:${poolContainer.containerPort}`,
+      access_url: `/api/gateway/${projectId}`,
+      data_path: projectWorkspaceHostPath,
     };
   }
 
@@ -155,78 +180,79 @@ export class ContainerPoolManager {
    */
   async releaseContainer(containerId: string, projectId: string): Promise<void> {
     log.info(`Releasing container ${containerId} back to pool`);
+    const containerPort = await this.getPortFromId(containerId);
 
     // 1. Stop container
+    let isStopped = false;
     try {
       const container = this.docker.getContainer(containerId);
       await container.stop({ t: 10 }); // 10 second timeout
+      isStopped = true;
     } catch (error) {
-      log.warn(`Failed to stop container ${containerId}: ${error}`);
+      log.warn(`Failed to stop container ${containerId} gracefully: ${error}`);
+      try {
+        const container = this.docker.getContainer(containerId);
+        await container.kill();
+        isStopped = true;
+      } catch (killError) {
+        log.error(`Failed to force-stop container ${containerId}: ${killError}`);
+      }
     }
 
-    // 2. Restart with temporary volume (pool mode)
-    const tempMount = path.join(this.config.storage.poolTempBase, containerId);
-    await fs.mkdir(tempMount, { recursive: true });
-
-    try {
-      const container = this.docker.getContainer(containerId);
-      await container.remove();
-    } catch (error) {
-      log.warn(`Failed to remove container ${containerId}: ${error}`);
+    if (!isStopped) {
+      await db
+        .update(containerPool)
+        .set({
+          status: 'stopping',
+          healthStatus: 'error',
+          errorMessage: `Failed to stop container ${containerId}`,
+          updatedAt: new Date(),
+        })
+        .where(eq(containerPool.containerId, containerId));
+      throw new Error(`RELEASE_FAILED: Could not stop container ${containerId}`);
     }
 
-    const newContainer = await this.docker.createContainer({
-      Image: this.config.pool.image,
-      name: containerId,
-      ExposedPorts: { '8053/tcp': {} },
-      HostConfig: {
-        PortBindings: { '8053/tcp': [{ HostPort: String(this.getPortFromId(containerId)) }] },
-        Binds: [`${tempMount}:/app/data`],
-        RestartPolicy: { Name: 'unless-stopped' },
-      },
-      Env: [
-        'NODE_ENV=production',
-        'PORT=8053',
-        'DATA_DIR=/app/data',
-        'POOL_MODE=true',
-      ],
-      Labels: {
-        'claude-ws.pool': 'true',
-        'claude-ws.managed': 'true',
-      },
-    });
+    const dataPath = this.getContainerMountPath(containerId);
+    await this.clearDirectory(dataPath);
+    await this.prepareDataPath(dataPath);
+    await this.initializeContainerProjectInDb(dataPath);
 
-    await newContainer.start();
-
-    log.info(`Restarted container ${containerId} in pool mode`);
+    log.info(`Returned container ${containerId} to sleeping pool mode`);
 
     // 3. Update database
-    await db.transaction(async (tx) => {
-      await tx
-        .update(projects)
+    db.transaction((tx) => {
+      tx
+        .update(poolProjects)
         .set({
           status: 'stopped',
-          stopped_at: new Date(),
+          stoppedAt: new Date(),
+          lastActivityAt: new Date(),
         })
-        .where(eq(projects.id, projectId));
+        .where(eq(poolProjects.id, projectId))
+        .run();
 
-      await tx
+      tx
         .update(containerPool)
         .set({
           status: 'idle',
-          project_id: null,
-          allocated_at: null,
+          projectId: null,
+          allocatedAt: null,
+          updatedAt: new Date(),
         })
-        .where(eq(containerPool.containerId, containerId));
+        .where(eq(containerPool.containerId, containerId))
+        .run();
 
       // Log activity
-      await tx.insert(projectActivityLog).values({
-        project_id: projectId,
-        container_id: containerId,
+      tx.insert(poolProjectActivityLog).values({
+        id: nanoid(),
+        projectId,
+        containerId,
         action: 'stopped',
-        details: { returned_to_pool: true },
-        performed_by: 'system',
-      });
+        details: JSON.stringify({ returnedToPool: true, containerPort }),
+        timestamp: new Date(),
+        performedBy: 'system',
+        performedAt: new Date(),
+      }).run();
     });
   }
 
@@ -234,9 +260,14 @@ export class ContainerPoolManager {
    * Ensure pool has required number of idle containers
    */
   async replenishPool(): Promise<void> {
-    const idleCount = await db.query.containerPool.count({
-      where: eq(containerPool.status, 'idle'),
-    });
+    await this.ensurePoolImageAvailable();
+    await this.reconcilePoolState();
+
+    const idleCountResult = await db
+      .select({ count: sql<number>`count(*)` })
+      .from(containerPool)
+      .where(eq(containerPool.status, 'idle'));
+    const idleCount = idleCountResult[0]?.count ?? 0;
 
     const needed = this.config.pool.size - idleCount;
 
@@ -250,44 +281,110 @@ export class ContainerPoolManager {
   }
 
   /**
+   * Reconcile stale DB state (e.g. after server restart/crash).
+   */
+  private async reconcilePoolState(): Promise<void> {
+    const containers = await db.query.containerPool.findMany();
+
+    for (const poolItem of containers) {
+      if (poolItem.status !== 'allocated') {
+        continue;
+      }
+
+      if (!poolItem.projectId) {
+        await db
+          .update(containerPool)
+          .set({
+            status: 'idle',
+            projectId: null,
+            allocatedAt: null,
+            updatedAt: new Date(),
+          })
+          .where(eq(containerPool.containerId, poolItem.containerId));
+        continue;
+      }
+
+      const project = await db.query.poolProjects.findFirst({
+        where: eq(poolProjects.id, poolItem.projectId),
+      });
+
+      const isProjectMapped =
+        project &&
+        project.status === 'allocated' &&
+        project.containerId === poolItem.containerId;
+
+      if (!isProjectMapped) {
+        await db
+          .update(containerPool)
+          .set({
+            status: 'idle',
+            projectId: null,
+            allocatedAt: null,
+            updatedAt: new Date(),
+          })
+          .where(eq(containerPool.containerId, poolItem.containerId));
+      }
+    }
+  }
+
+  /**
    * Create new idle container for pool
    */
   private async createIdleContainer(): Promise<void> {
     const timestamp = Date.now();
     const randomStr = Math.random().toString(36).substring(2, 9);
     const containerId = `claude-ws-pool-${timestamp}-${randomStr}`;
-    const port = await this.getNextAvailablePort();
+    const dataPath = this.getContainerMountPath(containerId);
+    await this.prepareDataPath(dataPath);
+    await this.initializeContainerProjectInDb(dataPath);
 
-    const tempMount = path.join(this.config.storage.poolTempBase, containerId);
-    await fs.mkdir(tempMount, { recursive: true });
+    const maxAttempts = 20;
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      const port = await this.getNextAvailablePort();
+      try {
+        await this.docker.createContainer({
+          Image: this.config.pool.image,
+          name: containerId,
+          Cmd: ['pnpm', 'start'],
+          ExposedPorts: { '8053/tcp': {} },
+          HostConfig: {
+            PortBindings: { '8053/tcp': [{ HostPort: String(port) }] },
+            Binds: [`${dataPath}:/app/data`],
+            RestartPolicy: { Name: 'unless-stopped' },
+          },
+          Env: this.buildContainerEnv(),
+          Labels: {
+            'claude-ws.pool': 'true',
+            'claude-ws.managed': 'true',
+            'claude-ws.pool.created': new Date().toISOString(),
+          },
+        });
 
-    const container = await this.docker.createContainer({
-      Image: this.config.pool.image,
-      name: containerId,
-      ExposedPorts: { '8053/tcp': {} },
-      HostConfig: {
-        PortBindings: { '8053/tcp': [{ HostPort: String(port) }] },
-        Binds: [`${tempMount}:/app/data`],
-        RestartPolicy: { Name: 'unless-stopped' },
-      },
-      Env: ['NODE_ENV=production', 'PORT=8053', 'DATA_DIR=/app/data', 'POOL_MODE=true'],
-      Labels: {
-        'claude-ws.pool': 'true',
-        'claude-ws.managed': 'true',
-        'claude-ws.pool.created': new Date().toISOString(),
-      },
-    });
+        await db.insert(containerPool).values({
+          id: containerId,
+          containerId,
+          status: 'idle',
+          containerPort: port,
+          projectId: null,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+          lastActivityAt: new Date(),
+          lastHealthCheck: new Date(),
+          healthStatus: 'healthy',
+        });
 
-    await container.start();
+        log.info(`Created warm sleeping container: ${containerId} on port ${port}`);
+        return;
+      } catch (error) {
+        if (this.isPortAlreadyAllocatedError(error) && attempt < maxAttempts) {
+          log.warn(`Port ${port} is already allocated while creating ${containerId}, retrying (${attempt}/${maxAttempts})`);
+          continue;
+        }
+        throw error;
+      }
+    }
 
-    await db.insert(containerPool).values({
-      containerId,
-      status: 'idle',
-      containerPort: port,
-      projectId: null,
-    });
-
-    log.info(`Created idle container: ${containerId} on port ${port}`);
+    throw new Error(`POOL_PORT_EXHAUSTED: Could not allocate port for ${containerId}`);
   }
 
   /**
@@ -303,13 +400,17 @@ export class ContainerPoolManager {
         const dockerContainer = this.docker.getContainer(container.containerId);
         const status = await dockerContainer.inspect();
 
-        const isHealthy = status.State.Running && status.State.Health?.Status !== 'unhealthy';
+        const isHealthy =
+          container.status === 'idle'
+            ? true
+            : status.State.Running && status.State.Health?.Status !== 'unhealthy';
 
         await db
           .update(containerPool)
           .set({
             healthStatus: isHealthy ? 'healthy' : 'unhealthy',
             lastHealthCheck: new Date(),
+            updatedAt: new Date(),
           })
           .where(eq(containerPool.containerId, container.containerId));
 
@@ -325,6 +426,7 @@ export class ContainerPoolManager {
             healthStatus: 'error',
             errorMessage: String(error),
             lastHealthCheck: new Date(),
+            updatedAt: new Date(),
           })
           .where(eq(containerPool.containerId, container.containerId));
       }
@@ -335,50 +437,76 @@ export class ContainerPoolManager {
    * Get next available port for pool container
    */
   private async getNextAvailablePort(): Promise<number> {
-    const containers = await db.query.containerPool.findMany({
-      orderBy: (containerPool, { desc }) => [containerPool.containerPort],
-    });
+    const containers = await db.query.containerPool.findMany();
 
     const usedPorts = new Set(containers.map((c) => c.containerPort));
     const basePort = this.config.pool.basePort;
+    const maxPort = Math.max(
+      basePort + this.config.pool.size * 5,
+      basePort + containers.length + 100
+    );
 
-    for (let i = 0; i < this.config.pool.size; i++) {
-      const port = basePort + i;
-      if (!usedPorts.has(port)) {
+    for (let port = basePort; port <= maxPort; port++) {
+      if (usedPorts.has(port)) {
+        continue;
+      }
+      if (await this.isHostPortAvailable(port)) {
         return port;
       }
     }
 
-    // If all pool ports are taken, find next available
-    return basePort + containers.length;
+    throw new Error(`POOL_PORT_EXHAUSTED: No available host port in range ${basePort}-${maxPort}`);
   }
 
-  private getPortFromId(containerId: string): number {
-    const container = db.query.containerPool.findFirst({
+  private async getPortFromId(containerId: string): Promise<number> {
+    const container = await db.query.containerPool.findFirst({
       where: eq(containerPool.containerId, containerId),
     });
 
     return container?.containerPort || this.config.pool.basePort;
   }
 
-  private sanitizeFilename(name: string): string {
-    return name
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, '-')
-      .replace(/^-|-$/g, '')
-      .substring(0, 50);
+  private getContainerMountPath(containerId: string): string {
+    return path.join(this.config.storage.basePath, containerId);
+  }
+
+  private async clearDirectory(directoryPath: string): Promise<void> {
+    await fs.rm(directoryPath, { recursive: true, force: true });
+  }
+
+  private async prepareDataPath(dataPath: string): Promise<void> {
+    const filesPath = path.join(dataPath, 'files');
+    const checkpointsPath = path.join(dataPath, 'checkpoints');
+    await fs.mkdir(dataPath, { recursive: true });
+    await fs.mkdir(filesPath, { recursive: true });
+    await fs.mkdir(checkpointsPath, { recursive: true });
+    // Pool containers run as non-root, so host-mounted directories must be writable.
+    await fs.chmod(dataPath, 0o777);
+    await fs.chmod(filesPath, 0o777);
+    await fs.chmod(checkpointsPath, 0o777);
   }
 
   private loadConfig(): PoolConfig {
+    const basePath = this.resolveStoragePath(
+      process.env.DATA_BASE_PATH || '/srv/claude-ws/pool-data',
+      'data/pool-data',
+      'DATA_BASE_PATH'
+    );
+    const poolTempBase = this.resolveStoragePath(
+      process.env.POOL_TEMP_BASE || '/srv/claude-ws/pool-temp',
+      'data/pool-temp',
+      'POOL_TEMP_BASE'
+    );
+
     return {
       pool: {
         size: parseInt(process.env.POOL_SIZE || '5'),
-        basePort: parseInt(process.env.POOL_BASE_PORT || '8054'),
+        basePort: parseInt(process.env.POOL_BASE_PORT || '30000'),
         image: process.env.POOL_IMAGE || 'claude-ws:latest',
       },
       storage: {
-        basePath: process.env.DATA_BASE_PATH || '/srv/claude-ws/data/projects',
-        poolTempBase: process.env.POOL_TEMP_BASE || '/srv/claude-ws/pool-temp',
+        basePath,
+        poolTempBase,
       },
       healthCheck: {
         intervalSeconds: parseInt(process.env.HEALTH_CHECK_INTERVAL_SECONDS || '60'),
@@ -386,6 +514,188 @@ export class ContainerPoolManager {
         retries: parseInt(process.env.HEALTH_CHECK_RETRIES || '3'),
       },
     };
+  }
+
+  private resolveStoragePath(configuredPath: string, fallbackRelativePath: string, envName: string): string {
+    try {
+      mkdirSync(configuredPath, { recursive: true });
+      return configuredPath;
+    } catch (error) {
+      const isPermissionError =
+        error instanceof Error &&
+        'code' in error &&
+        (error as NodeJS.ErrnoException).code === 'EACCES';
+
+      if (process.env.NODE_ENV === 'production' || !isPermissionError) {
+        throw error;
+      }
+
+      const fallbackPath = path.resolve(process.cwd(), fallbackRelativePath);
+      mkdirSync(fallbackPath, { recursive: true });
+      log.warn(
+        `${envName} path "${configuredPath}" is not writable, falling back to "${fallbackPath}" in development`
+      );
+      return fallbackPath;
+    }
+  }
+
+  private async ensurePoolImageAvailable(): Promise<void> {
+    try {
+      await this.docker.getImage(this.config.pool.image).inspect();
+    } catch (error) {
+      const statusCode = (error as { statusCode?: number })?.statusCode;
+      if (statusCode !== 404) {
+        throw error;
+      }
+
+      throw new Error(
+        `POOL_IMAGE_NOT_FOUND: Docker image "${this.config.pool.image}" was not found. ` +
+          `Set POOL_IMAGE in packages/admin-panel/.env to an existing image, or build one first (example: docker build -t ${this.config.pool.image} .).`
+      );
+    }
+  }
+
+  private async isContainerMissing(containerId: string): Promise<boolean> {
+    try {
+      await this.docker.getContainer(containerId).inspect();
+      return false;
+    } catch (error) {
+      const statusCode = (error as { statusCode?: number })?.statusCode;
+      if (statusCode === 404) {
+        return true;
+      }
+      throw error;
+    }
+  }
+
+  private async removeContainerIfExists(containerId: string): Promise<void> {
+    try {
+      await this.docker.getContainer(containerId).remove({ force: true });
+    } catch (error) {
+      const statusCode = (error as { statusCode?: number })?.statusCode;
+      if (statusCode !== 404) {
+        log.warn(`Failed to remove container ${containerId}: ${error}`);
+      }
+    }
+  }
+
+  private async ensureContainerNetworkAttached(containerId: string): Promise<void> {
+    const container = this.docker.getContainer(containerId);
+    const inspectResult = await container.inspect();
+    const networks = inspectResult.NetworkSettings?.Networks ?? {};
+    if (Object.keys(networks).length > 0) {
+      return;
+    }
+
+    log.warn(`Container ${containerId} has no attached Docker network; connecting to "bridge".`);
+    await this.docker.getNetwork('bridge').connect({ Container: containerId });
+  }
+
+  private isPortAlreadyAllocatedError(error: unknown): boolean {
+    const message = String(error);
+    return message.includes('port is already allocated') || message.includes('Bind for 0.0.0.0');
+  }
+
+  private async isHostPortAvailable(port: number): Promise<boolean> {
+    return await new Promise<boolean>((resolve) => {
+      const server = net.createServer();
+      server.once('error', () => resolve(false));
+      server.once('listening', () => {
+        server.close(() => resolve(true));
+      });
+      server.listen(port, '0.0.0.0');
+    });
+  }
+
+  private async initializeContainerProjectInDb(dataPath: string): Promise<void> {
+    const projectId = 'pool-project';
+    const projectName = 'Idle Project';
+    const projectPath = '/app/data/pool-idle';
+    await this.upsertContainerProject(dataPath, projectId, projectName, projectPath);
+  }
+
+  private async updateContainerProjectInDb(dataPath: string, projectId: string, projectName: string): Promise<string> {
+    const projectSlug = this.sanitizeProjectName(projectName || projectId);
+    const projectPath = `/app/data/${projectSlug}`;
+    return this.upsertContainerProject(dataPath, projectId, projectName, projectPath);
+  }
+
+  private async upsertContainerProject(
+    dataPath: string,
+    projectId: string,
+    projectName: string,
+    projectPath: string
+  ): Promise<string> {
+    const relativePath = projectPath.replace('/app/data/', '');
+    const projectDirPath = path.join(dataPath, relativePath);
+    await fs.mkdir(projectDirPath, { recursive: true });
+    await fs.chmod(projectDirPath, 0o777);
+
+    const dbFilePath = path.join(dataPath, 'claude-ws.db');
+    const sqlite = new BetterSqlite3(dbFilePath);
+
+    try {
+      sqlite.exec(`
+        CREATE TABLE IF NOT EXISTS projects (
+          id TEXT PRIMARY KEY,
+          name TEXT NOT NULL,
+          path TEXT NOT NULL UNIQUE,
+          created_at INTEGER NOT NULL DEFAULT (unixepoch() * 1000)
+        );
+      `);
+
+      sqlite.prepare('DELETE FROM projects').run();
+      sqlite
+        .prepare('INSERT INTO projects (id, name, path, created_at) VALUES (?, ?, ?, ?)')
+        .run(projectId, projectName, projectPath, Date.now());
+    } finally {
+      sqlite.close();
+    }
+
+    // Ensure runtime user in container can write the SQLite file.
+    await fs.chmod(dbFilePath, 0o666);
+    return projectDirPath;
+  }
+
+  private sanitizeProjectName(name: string): string {
+    const sanitized = name
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9-_]+/g, '-')
+      .replace(/^-+|-+$/g, '');
+    return sanitized || 'project';
+  }
+
+  private buildContainerEnv(): string[] {
+    const env = [
+      'NODE_ENV=production',
+      'PORT=8053',
+      'DATA_DIR=/app/data',
+      'POOL_MODE=true',
+      // Pool containers should run with SDK provider and ANTHROPIC_* env vars.
+      'CLAUDE_PROVIDER=sdk',
+    ];
+
+    const passthroughKeys = [
+      'API_ACCESS_KEY',
+      'ANTHROPIC_BASE_URL',
+      'ANTHROPIC_API_KEY',
+      'ANTHROPIC_AUTH_TOKEN',
+      'ANTHROPIC_MODEL',
+      'ANTHROPIC_DEFAULT_OPUS_MODEL',
+      'ANTHROPIC_DEFAULT_SONNET_MODEL',
+      'ANTHROPIC_DEFAULT_HAIKU_MODEL',
+      'API_TIMEOUT_MS',
+    ];
+
+    for (const key of passthroughKeys) {
+      const value = process.env[key];
+      if (value) {
+        env.push(`${key}=${value}`);
+      }
+    }
+
+    return env;
   }
 }
 

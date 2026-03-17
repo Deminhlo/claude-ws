@@ -52,16 +52,6 @@ export function AdminDashboard() {
     }
   };
 
-  const getStatusColor = (status: string) => {
-    switch (status) {
-      case 'running': return 'bg-green-500';
-      case 'allocated': return 'bg-blue-500';
-      case 'stopped': return 'bg-gray-500';
-      case 'error': return 'bg-red-500';
-      default: return 'bg-yellow-500';
-    }
-  };
-
   const getStatusVariant = (status: string): "default" | "secondary" | "destructive" | "outline" => {
     switch (status) {
       case 'running': return 'default';

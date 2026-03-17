@@ -117,7 +117,8 @@ class AgentManager extends EventEmitter {
     }
 
     // Build model identity for system prompt
-    const effectiveModel = model || 'claude-opus-4-6';
+    const configuredDefaultModel = process.env.ANTHROPIC_MODEL?.trim();
+    const effectiveModel = model || configuredDefaultModel || 'claude-opus-4-6';
     const modelDisplayName = modelIdToDisplayName(effectiveModel);
     const modelIdentity = modelDisplayName !== effectiveModel
       ? `You are powered by the model named ${modelDisplayName}. The exact model ID is ${effectiveModel}.`

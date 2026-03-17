@@ -9,10 +9,10 @@
 !.yarn/plugins
 !.yarn/releases
 !.yarn/versions
-
+packages/admin-panel/data/
 #deployment
 .npmrc
-
+tests/
 tmp/
 # testing
 /coverage

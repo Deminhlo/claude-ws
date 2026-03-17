@@ -45,7 +45,7 @@ export function CreateProjectModal({ onProjectCreated }: CreateProjectModalProps
       });
 
       if (response.ok) {
-        const result = await response.json();
+        await response.json();
         setOpen(false);
         setFormData({ name: '', description: '', idle_timeout: '24', memory_limit: '2G', cpu_limit: '1.0' });
         onProjectCreated?.();

@@ -1,4 +1,4 @@
-# Docker Compose for Claude WS with separated Admin Panel
+# Docker Compose for Claude WS
 # version: '3.9'
 
 services:
@@ -18,6 +18,8 @@ services:
       # Server Configuration
       - NODE_ENV=production
       - PORT=${PORT:-8053}
+      - CLAUDE_WS_MODE=lite
+      - CLAUDE_WS_PROJECT_PATH=/workspace
 
       # Data Directory
       - DATA_DIR=/app/data
@@ -34,6 +36,7 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - claude-data:/app/data
+      - ./workspace:/workspace
 
     networks:
       - claude-network
@@ -45,58 +48,8 @@ services:
       retries: 3
       start_period: 40s
 
-  # Admin Panel (separate service)
-  admin-panel:
-    build:
-      context: ./packages/admin-panel
-      dockerfile: Dockerfile
-    container_name: claude-admin-panel
-    restart: unless-stopped
-    ports:
-      - "3001:3001"
-    env_file:
-      - ./packages/admin-panel/.env
-
-    environment:
-      # Server Configuration
-      - NODE_ENV=production
-      - PORT=3001
-      - HOST=0.0.0.0
-
-      # Admin Panel Configuration
-      - ADMIN_PORT=3001
-      - DATABASE_PATH=/app/data/admin.db
-      - DOCKER_SOCKET_PATH=/var/run/docker.sock
-
-      # Pool Configuration
-      - POOL_SIZE=5
-      - IDLE_TIMEOUT_SECONDS=86400
-
-      # CORS Settings
-      - ALLOWED_ORIGINS=http://localhost:3000,http://localhost:3001
-
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
-      - admin-data:/app/data
-      - /var/run/docker.sock:/var/run/docker.sock
-
-    networks:
-      - claude-network
-
-    depends_on:
-      - claude-ws
-
-    healthcheck:
-      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://127.0.0.1:3001/api/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 40s
-
 volumes:
   claude-data:
-    driver: local
-  admin-data:
     driver: local
 
 networks:

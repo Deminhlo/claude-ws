@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 
 import { db } from '@/lib/db';
-import { poolProjects, containerPool } from '@/lib/db/schema';
+import { poolProjects } from '@/lib/db/schema';
 import { eq, desc } from 'drizzle-orm';
 import { verifyApiKey, unauthorizedResponse } from '@/lib/api-auth';
 import { createLogger } from '@/lib/logger';

@@ -60,6 +60,9 @@ tests
 *.test.ts
 *.spec.ts
 
+# Exclude admin panel from main image build
+packages/admin-panel
+
 # CI/CD
 .github
 

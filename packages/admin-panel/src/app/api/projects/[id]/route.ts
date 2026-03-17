@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { nanoid } from 'nanoid';
 import { eq, desc } from 'drizzle-orm';
 
 import { db } from '@/lib/db';
@@ -50,9 +51,7 @@ export async function GET(request: NextRequest, context: Context) {
     return NextResponse.json({
       project: {
         ...project,
-        access_url: container
-          ? `http://pool-${container.containerId.split('-')[2]}.claude-ws.local:${container.containerPort}`
-          : null,
+        access_url: container ? `/api/gateway/${id}` : null,
       },
       container,
       activity_log: activity,
@@ -102,11 +101,13 @@ export async function DELETE(request: NextRequest, context: Context) {
 
     // Log activity (before deletion so we still have the project info)
     await db.insert(poolProjectActivityLog).values({
+      id: nanoid(),
       projectId: id,
       action: 'deleted',
       details: JSON.stringify({ data_deleted: delete_data, data_path: project.dataPath }),
+      timestamp: new Date(),
       performedBy: 'admin',
-      performedAt: Date.now(),
+      performedAt: new Date(),
     });
 
     return NextResponse.json({
@@ -153,12 +154,14 @@ export async function POST(request: NextRequest, context: Context) {
 
     // Log activity
     await db.insert(poolProjectActivityLog).values({
+      id: nanoid(),
       projectId: id,
       containerId: project.containerId,
       action: 'stopped',
       details: JSON.stringify({ reason, return_to_pool }),
+      timestamp: new Date(),
       performedBy: 'admin',
-      performedAt: Date.now(),
+      performedAt: new Date(),
     });
 
     return NextResponse.json({

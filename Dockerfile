@@ -31,6 +31,7 @@ COPY . .
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
 ENV DATA_DIR=/app/data
+ENV CLAUDE_WS_SKIP_DB_INIT=1
 
 # Generate Prisma client (if needed)
 # RUN pnpm prisma generate
@@ -40,12 +41,15 @@ RUN pnpm build
 
 # Stage 3: Runner
 FROM node:20-alpine AS runner
-RUN apk add --no-cache libc6-compat python3 make g++ sqlite
+RUN apk add --no-cache libc6-compat python3 make g++ sqlite git
 
 WORKDIR /app
 
 # Install pnpm
 RUN npm install -g pnpm
+
+# Claude Agent SDK shells out to Claude Code CLI (`claude` binary).
+RUN npm install -g @anthropic-ai/claude-code
 
 # Create non-root user for security
 RUN addgroup -g 1001 -S nodejs
@@ -63,7 +67,7 @@ COPY --from=builder /app/locales ./locales
 
 # Copy built application
 COPY --from=builder --chown=nextjs:nodejs /app/.next ./.next
-COPY --from=builder --chown=nextjs:nodejs /app/packages ./packages
+COPY --from=builder --chown=nextjs:nodejs /app/packages/agentic-sdk ./packages/agentic-sdk
 COPY --from=builder --chown=nextjs:nodejs /app/node_modules ./node_modules
 
 # Copy server entry point and source code
@@ -71,9 +75,6 @@ COPY --from=builder --chown=nextjs:nodejs /app/server.ts ./server.ts
 COPY --from=builder --chown=nextjs:nodejs /app/bin ./bin
 COPY --from=builder --chown=nextjs:nodejs /app/src ./src
 COPY --from=builder --chown=nextjs:nodejs /app/scripts ./scripts
-
-# Copy .env file for production (will be overridden by docker-compose env_file if needed)
-COPY --from=builder --chown=nextjs:nodejs /app/.env ./.env
 
 # Create data directory with proper permissions
 RUN mkdir -p /app/data && chown -R nextjs:nodejs /app/data
@@ -83,6 +84,7 @@ ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
 ENV PORT=8053
 ENV DATA_DIR=/app/data
+ENV CLAUDE_PATH=/usr/local/bin/claude
 
 # Switch to non-root user
 USER nextjs
@@ -92,7 +94,7 @@ EXPOSE 8053
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
-  CMD node -e "require('http').get('http://localhost:8053/api/health', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"
+  CMD node -e "require('http').get('http://localhost:8053/', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"
 
 # Start the application
 CMD ["pnpm", "start"]

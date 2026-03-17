@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
+import { schema } from '@/lib/db';
 import { existsSync } from 'fs';
-import { readFile } from 'fs/promises';
+import { mkdir, readFile } from 'fs/promises';
 import { join } from 'path';
 import { formatOutput } from '@/lib/output-formatter';
 import { waitForAttemptCompletion, AttemptTimeoutError } from '@/lib/attempt-waiter';
@@ -9,13 +10,18 @@ import { agentManager } from '@/lib/agent-manager';
 import { sessionManager } from '@/lib/session-manager';
 import { getContentTypeForFormat } from '@/lib/content-types';
 import { createAttemptService } from '@agentic-sdk/services/attempt/attempt-crud-and-logs';
-import { createForceCreateService, ForceCreateError } from '@agentic-sdk/services/force-create-project-and-task';
 import { createProjectService } from '@agentic-sdk/services/project/project-crud';
 import { createTaskService } from '@agentic-sdk/services/task/task-crud-and-reorder';
+import { and, desc, eq } from 'drizzle-orm';
+import {
+  getProjectIdFromWorkspacePath,
+  getProjectNameFromWorkspacePath,
+  resolveWorkspacePath,
+  WorkspacePathError,
+} from '@/lib/workspace-context';
 import type { ClaudeOutput, OutputFormat, RequestMethod } from '@/types';
 
 const attemptService = createAttemptService(db);
-const forceCreateService = createForceCreateService(db);
 const projectService = createProjectService(db);
 const taskService = createTaskService(db);
 
@@ -30,8 +36,8 @@ export async function POST(request: NextRequest) {
       force_create,
       projectId,
       projectName,
+      path,
       taskTitle,
-      projectRootPath,
       request_method = 'queue',
       output_format,
       output_schema,
@@ -110,37 +116,13 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Step 3: Task doesn't exist, use forceCreateService to ensure project+task exist
-    if (!projectId) {
-      return NextResponse.json(
-        { error: 'projectId required' },
-        { status: 400 }
-      );
-    }
-
-    let newTask;
-    try {
-      const result = await forceCreateService.ensureProjectAndTask({
-        taskId,
-        projectId,
-        projectName,
-        taskTitle,
-        projectRootPath,
-        defaultBasePath: process.env.CLAUDE_WS_USER_CWD || process.cwd(),
-      });
-      newTask = result.task;
-    } catch (error) {
-      if (error instanceof ForceCreateError) {
-        return NextResponse.json(
-          { error: error.message },
-          { status: error.statusCode }
-        );
-      }
-      return NextResponse.json(
-        { error: 'Failed to create project or task' },
-        { status: 500 }
-      );
-    }
+    // Step 3: Task doesn't exist, create lightweight task from workspace path
+    const project = await ensureProjectForForceCreate({
+      projectId,
+      projectName,
+      path,
+    });
+    const newTask = await createLightweightTask(taskId, project.id, taskTitle);
 
     // Step 4: Create attempt with the newly created task
     return await createAttempt(
@@ -153,9 +135,16 @@ export async function POST(request: NextRequest) {
       model
     );
 
-  } catch (error: any) {
+  } catch (error: unknown) {
+    if (error instanceof WorkspacePathError) {
+      return NextResponse.json(
+        { error: error.message },
+        { status: error.statusCode }
+      );
+    }
+
     // Handle foreign key constraint (invalid taskId)
-    if (error?.code === 'SQLITE_CONSTRAINT_FOREIGNKEY') {
+    if (getSqliteCode(error) === 'SQLITE_CONSTRAINT_FOREIGNKEY') {
       return NextResponse.json(
         { error: 'Task not found' },
         { status: 404 }
@@ -171,7 +160,7 @@ export async function POST(request: NextRequest) {
 
 // Helper function to create attempt
 async function createAttempt(
-  task: any,
+  task: { id: string; projectId: string; status: string },
   prompt: string,
   requestMethod: RequestMethod = 'queue',
   outputFormat?: OutputFormat,
@@ -255,7 +244,7 @@ async function createAttempt(
                 'Content-Type': contentType,
               },
             });
-          } catch (readError) {
+          } catch {
             return NextResponse.json(
               { error: 'Failed to read output file' },
               { status: 500 }
@@ -320,4 +309,105 @@ async function createAttempt(
 
   // Fallback for any other request_method value
   return NextResponse.json(newAttempt, { status: 201 });
+}
+
+function sanitizeProjectName(name: string): string {
+  const sanitized = name
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9-_]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+  return sanitized || 'project';
+}
+
+async function ensureProjectForForceCreate(options: {
+  projectId?: string;
+  projectName?: string;
+  path?: string;
+}) {
+  const explicitProjectId = options.projectId?.trim();
+  if (explicitProjectId) {
+    const existingById = await projectService.getById(explicitProjectId);
+    if (existingById) return existingById;
+  }
+
+  let workspacePath: string;
+  if (options.path?.trim()) {
+    const resolvedWorkspace = await resolveWorkspacePath(options.path);
+    workspacePath = resolvedWorkspace.path;
+  } else if (explicitProjectId) {
+    const dataDir = process.env.DATA_DIR || join(process.env.CLAUDE_WS_USER_CWD || process.cwd(), 'data');
+    const folderName = options.projectName?.trim() ? sanitizeProjectName(options.projectName) : explicitProjectId;
+    workspacePath = join(dataDir, folderName);
+    await mkdir(workspacePath, { recursive: true });
+  } else {
+    const resolvedWorkspace = await resolveWorkspacePath(options.path);
+    workspacePath = resolvedWorkspace.path;
+  }
+
+  const existingByPath = await projectService.getByPath(workspacePath);
+  if (existingByPath) return existingByPath;
+
+  const resolvedProjectId = explicitProjectId || getProjectIdFromWorkspacePath(workspacePath);
+  const resolvedProjectName = options.projectName?.trim() || getProjectNameFromWorkspacePath(workspacePath);
+
+  try {
+    return await projectService.create({
+      id: resolvedProjectId,
+      name: resolvedProjectName,
+      path: workspacePath,
+    });
+  } catch (error: unknown) {
+    if (getSqliteCode(error) === 'SQLITE_CONSTRAINT_PRIMARYKEY') {
+      const existingById = await projectService.getById(resolvedProjectId);
+      if (existingById) return existingById;
+    }
+    throw error;
+  }
+}
+
+async function createLightweightTask(taskId: string, projectId: string, taskTitle?: string) {
+  const existingTask = await taskService.getById(taskId);
+  if (existingTask) return existingTask;
+
+  const resolvedTaskTitle = taskTitle?.trim() || 'Quick task';
+  const latestTask = await db
+    .select()
+    .from(schema.tasks)
+    .where(and(eq(schema.tasks.projectId, projectId), eq(schema.tasks.status, 'todo')))
+    .orderBy(desc(schema.tasks.position))
+    .limit(1);
+  const position = latestTask.length > 0 ? latestTask[0].position + 1 : 0;
+
+  try {
+    await db.insert(schema.tasks).values({
+      id: taskId,
+      projectId,
+      title: resolvedTaskTitle,
+      description: null,
+      status: 'todo',
+      position,
+      chatInit: false,
+      rewindSessionId: null,
+      rewindMessageUuid: null,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    });
+  } catch (error: unknown) {
+    if (getSqliteCode(error) !== 'SQLITE_CONSTRAINT_PRIMARYKEY') {
+      throw error;
+    }
+  }
+
+  const createdTask = await taskService.getById(taskId);
+  if (!createdTask) {
+    throw new Error('Failed to create task');
+  }
+  return createdTask;
+}
+
+function getSqliteCode(error: unknown): string | undefined {
+  if (!error || typeof error !== 'object') return undefined;
+  const value = error as { code?: unknown };
+  return typeof value.code === 'string' ? value.code : undefined;
 }
