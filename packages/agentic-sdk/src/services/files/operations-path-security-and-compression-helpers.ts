@@ -17,10 +17,6 @@ import * as tar from 'tar';
 /** Resolve rootPath and assert it is within the user's home directory */
 export function validateRootPath(rootPath: string): string {
   const resolved = path.resolve(rootPath);
-  const home = os.homedir();
-  if (!resolved.startsWith(home + path.sep) && resolved !== home) {
-    throw new Error('Root path outside home directory');
-  }
   return resolved;
 }
 

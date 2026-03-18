@@ -52,11 +52,11 @@ export async function scanDirectoryForComponents(
 ): Promise<void> {
   if (depth > 10 || visited.has(dir)) return;
   visited.add(dir);
-  if (dir === excludeDir || dir.startsWith(excludeDir + '/')) return;
+  if (dir === excludeDir || dir.startsWith(excludeDir + path.sep)) return;
 
   try {
     const entries = await fs.readdir(dir, { withFileTypes: true });
-    const dirName = dir.split('/').pop()!;
+    const dirName = path.basename(dir);
 
     if (['skills', 'commands', 'agents'].includes(dirName)) {
       await scanComponentDirectory(dir, dirName, discoveredItems);
@@ -135,7 +135,7 @@ export function buildFolderHierarchy(discoveredItems: Map<string, DiscoveredItem
   const roots = new Map<string, DiscoveredFolder>();
 
   for (const [, item] of discoveredItems) {
-    const relative = item.sourcePath.replace(homeDir + '/', '');
+    const relative = path.relative(homeDir, item.sourcePath).replace(/\\/g, '/');
     const parts = relative.split('/');
     const compTypeIdx = parts.findIndex(p => ['skills', 'commands', 'agents'].includes(p));
     if (compTypeIdx === -1) continue;

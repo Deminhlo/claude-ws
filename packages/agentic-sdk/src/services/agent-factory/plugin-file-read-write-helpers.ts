@@ -103,7 +103,7 @@ export async function listSourcePathFiles(
   if (!resolved.startsWith(homedir())) return { error: 'Access denied', status: 403 };
   if (!existsSync(sourcePath)) return { error: 'Source path not found', status: 404 };
   if (type === 'skill') return { files: await buildTree(sourcePath, '') };
-  const fileName = sourcePath.split('/').pop()!;
+  const fileName = path.basename(sourcePath);
   return { files: [{ name: fileName, path: fileName, type: 'file' }] };
 }
 
@@ -128,9 +128,9 @@ export async function readSourceFileContent(
   if (stats.isDirectory()) return { error: 'Is a directory', status: 400 };
 
   const content = await fs.readFile(fullPath, 'utf-8');
-  const ext = filePath.split('.').pop() || '';
+  const ext = path.extname(filePath).slice(1);
   return {
-    name: filePath.split('/').pop() || filePath,
+    name: path.basename(filePath),
     path: filePath,
     content,
     language: getLanguageFromExtension(ext),

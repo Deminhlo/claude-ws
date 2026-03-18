@@ -4,6 +4,7 @@
  */
 import { readFile, writeFile, mkdir, cp } from 'fs/promises';
 import { join } from 'path';
+import path from 'path';
 import { existsSync } from 'fs';
 import { getAgentFactoryDir } from './dir-resolver';
 
@@ -32,8 +33,8 @@ export function createAgentFactoryImportService(db: any, registryService: any) {
         targetPath = join(typeDir, name);
         await cp(sourcePath, targetPath, { recursive: true });
       } else {
-        const fileName = sourcePath.split('/').pop()!;
-        targetPath = join(typeDir, fileName);
+        const fileName = join(typeDir, path.basename(sourcePath));
+        targetPath = fileName;
         await writeFile(targetPath, await readFile(sourcePath, 'utf-8'), 'utf-8');
       }
 

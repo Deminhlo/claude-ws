@@ -72,7 +72,7 @@ export function createAgentFactoryFilesystemService() {
 
       // command / agent: single file
       if (!existsSync(pluginPath)) return { files: [], error: 'Plugin file not found' };
-      const fileName = pluginPath.split('/').pop()!;
+      const fileName = path.basename(pluginPath);
       return { files: [{ name: fileName, path: fileName, type: 'file' }] };
     },
 

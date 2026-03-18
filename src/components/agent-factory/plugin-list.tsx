@@ -42,8 +42,8 @@ export function PluginList() {
       p.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
       (p.description?.toLowerCase().includes(searchQuery.toLowerCase()) ?? false);
     const isInAgentFactory = p.type === 'agent_set'
-      ? (p.agentSetPath?.includes('/agent-factory/') ?? false)
-      : (p.sourcePath?.includes('/agent-factory/') ?? false);
+      ? (p.agentSetPath?.toLowerCase().includes('agent-factory') ?? false)
+      : (p.sourcePath?.toLowerCase().includes('agent-factory') ?? false);
     return matchesStorage && matchesFilter && matchesSearch && isInAgentFactory;
   });
 

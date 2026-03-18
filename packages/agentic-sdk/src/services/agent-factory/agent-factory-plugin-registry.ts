@@ -48,7 +48,11 @@ export function createAgentFactoryService(db: any): AgentFactoryService {
       const { existsSync } = await import('fs');
       const all = await this.listPlugins(filters);
       return (all as any[]).filter((plugin: any) => {
-        if (plugin.storageType === 'imported') return plugin.sourcePath && existsSync(plugin.sourcePath);
+        if (plugin.storageType === 'imported') {
+          const exists = plugin.sourcePath && existsSync(plugin.sourcePath);
+          console.log(`[AF] Checking ${plugin.name} (${plugin.type}) at ${plugin.sourcePath}: ${exists}`);
+          return exists;
+        }
         return true;
       });
     },

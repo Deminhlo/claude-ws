@@ -85,7 +85,8 @@ export function PluginDetailFilesTab({
     try {
       let data;
       if (plugin.isImported) {
-        const encodedPath = filePath.split('/').map(encodeURIComponent).join('/');
+        const normalizedPath = filePath.replace(/\\/g, '/');
+        const encodedPath = normalizedPath.split('/').map(encodeURIComponent).join('/');
         const res = await fetch(`/api/agent-factory/plugins/${plugin.id}/files/${encodedPath}`);
         if (!res.ok) throw new Error(t('failedToLoadFile'));
         data = await res.json();
@@ -132,9 +133,8 @@ export function PluginDetailFilesTab({
     return nodes.map((node) => (
       <div key={node.path}>
         <div
-          className={`flex items-center gap-1 py-1 px-2 hover:bg-muted rounded cursor-pointer text-sm ${
-            selectedFile === node.path ? 'bg-muted' : ''
-          }`}
+          className={`flex items-center gap-1 py-1 px-2 hover:bg-muted rounded cursor-pointer text-sm ${selectedFile === node.path ? 'bg-muted' : ''
+            }`}
           style={{ paddingLeft: `${level * 16 + 8}px` }}
           onClick={() => handleFileClick(node)}
         >

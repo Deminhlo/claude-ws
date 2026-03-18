@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { verifyApiKey, unauthorizedResponse } from '@/lib/api-auth';
-import { getGlobalClaudeDir } from '@agentic-sdk/services/agent-factory/dir-resolver';
+import { getAgentFactoryDir } from '@agentic-sdk/services/agent-factory/dir-resolver';
 import { createAgentFactoryFilesystemService } from '@agentic-sdk/services/agent-factory/plugin-filesystem-operations';
 
 const fsService = createAgentFactoryFilesystemService();
@@ -10,8 +10,8 @@ export async function POST(request: NextRequest) {
   try {
     if (!verifyApiKey(request)) return unauthorizedResponse();
 
-    const claudeHomeDir = getGlobalClaudeDir();
-    const discovered = await fsService.discoverComponents(claudeHomeDir);
+    const excludeDir = getAgentFactoryDir();
+    const discovered = await fsService.discoverComponents(excludeDir);
 
     return NextResponse.json({ discovered });
   } catch (error) {
