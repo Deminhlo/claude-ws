@@ -22,13 +22,13 @@ export function WizardStepCloudflare() {
     setWizardOpen(false);
   };
 
-  const copyToClipboard = (text: string, key: string) => {
+  const copyToClipboard = (text: string, id: string) => {
     navigator.clipboard.writeText(text);
-    setCopiedCommand(key);
+    setCopiedCommand(id);
     setTimeout(() => setCopiedCommand(null), 2000);
   };
 
-  const CommandBlock = ({ command, label, key }: { command: string; label: string; key: string }) => (
+  const CommandBlock = ({ command, label, id }: { command: string; label: string; id: string }) => (
     <div className="flex items-center gap-2 group">
       <code className="flex-1 bg-background px-2 py-1.5 rounded text-xs font-mono overflow-x-auto">
         {command}
@@ -37,9 +37,9 @@ export function WizardStepCloudflare() {
         variant="ghost"
         size="sm"
         className="opacity-0 group-hover:opacity-100 transition-opacity"
-        onClick={() => copyToClipboard(command, key)}
+        onClick={() => copyToClipboard(command, id)}
       >
-        {copiedCommand === key ? (
+        {copiedCommand === id ? (
           <Check className="h-4 w-4 text-green-500" />
         ) : (
           <Copy className="h-4 w-4" />
@@ -71,21 +71,25 @@ export function WizardStepCloudflare() {
               <h4 className="font-semibold text-foreground">1. {t('installCloudflared')}</h4>
               <CommandBlock
                 key="install-macos"
+                id="install-macos"
                 command="brew install cloudflared"
                 label="macOS"
               />
               <CommandBlock
                 key="install-linux"
+                id="install-linux"
                 command="curl -L https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -o cloudflared"
                 label="Linux (download)"
               />
               <CommandBlock
                 key="install-linux2"
+                id="install-linux2"
                 command="chmod +x cloudflared && sudo mv cloudflared /usr/local/bin/"
                 label="Linux (install)"
               />
               <CommandBlock
                 key="install-windows"
+                id="install-windows"
                 command="winget install Cloudflare.cloudflared"
                 label="Windows"
               />
@@ -95,6 +99,7 @@ export function WizardStepCloudflare() {
               <h4 className="font-semibold text-foreground">2. {t('authenticateWithCloudflare')}</h4>
               <CommandBlock
                 key="auth"
+                id="auth"
                 command="cloudflared tunnel login"
                 label="Authenticate"
               />
@@ -104,6 +109,7 @@ export function WizardStepCloudflare() {
               <h4 className="font-semibold text-foreground">3. {t('createTunnel')}</h4>
               <CommandBlock
                 key="create"
+                id="create"
                 command="cloudflared tunnel create claude-workspace"
                 label="Create tunnel"
               />
@@ -128,6 +134,7 @@ export function WizardStepCloudflare() {
               <h4 className="font-semibold text-foreground">5. {t('addDnsRecord')}</h4>
               <CommandBlock
                 key="dns"
+                id="dns"
                 command="cloudflared tunnel route dns claude-workspace claude-ws.yourdomain.com"
                 label="Add DNS"
               />
@@ -137,6 +144,7 @@ export function WizardStepCloudflare() {
               <h4 className="font-semibold text-foreground">6. {t('runTunnel')}</h4>
               <CommandBlock
                 key="run"
+                id="run"
                 command="cloudflared tunnel run claude-workspace"
                 label="Run tunnel"
               />
@@ -145,11 +153,13 @@ export function WizardStepCloudflare() {
               </p>
               <CommandBlock
                 key="service-install"
+                id="service-install"
                 command="sudo cloudflared service install"
                 label="Install service"
               />
               <CommandBlock
                 key="service-start"
+                id="service-start"
                 command="sudo systemctl start cloudflared"
                 label="Start service"
               />

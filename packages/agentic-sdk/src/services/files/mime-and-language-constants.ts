@@ -16,7 +16,7 @@ export const LANGUAGE_MAP: Record<string, string | null> = {
   '.html': 'html', '.htm': 'html', '.css': 'css', '.scss': 'css',
   '.sass': 'css', '.less': 'css',
   '.json': 'json', '.yaml': 'yaml', '.yml': 'yaml', '.xml': 'xml',
-  '.toml': null, '.env': null, '.gitignore': null, '.dockerignore': null,
+  '.toml': null, '.env': 'bash', '.gitignore': 'bash', '.dockerignore': 'bash',
   '.md': 'markdown', '.mdx': 'markdown',
   '.sh': null, '.bash': null, '.zsh': null,
   '.py': 'python', '.go': null, '.rs': 'rust', '.sql': 'sql',

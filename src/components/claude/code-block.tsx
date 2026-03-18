@@ -41,6 +41,7 @@ hljs.registerLanguage('java', java);
 hljs.registerLanguage('bash', bash);
 hljs.registerLanguage('sh', bash);
 hljs.registerLanguage('shell', bash);
+hljs.registerLanguage('env', bash);
 hljs.registerLanguage('sql', sql);
 hljs.registerLanguage('yaml', yaml);
 hljs.registerLanguage('yml', yaml);
@@ -119,10 +120,20 @@ function highlightCode(code: string, language?: string): string {
   }
 
   try {
-    const result = hljs.highlight(code, { language, ignoreIllegals: true });
-    // Apply TypeScript enhancements
-    return enhanceTypeScriptHighlighting(result.value, language);
-  } catch {
+    // Verify if language is registered
+    const isRegistered = !!hljs.getLanguage(language);
+
+    if (isRegistered) {
+      const result = hljs.highlight(code, { language, ignoreIllegals: true });
+      // Apply TypeScript enhancements
+      return enhanceTypeScriptHighlighting(result.value, language);
+    } else {
+      // Fallback: try auto-detection for unregistered languages
+      const result = hljs.highlightAuto(code);
+      return result.value;
+    }
+  } catch (error) {
+    console.error(`[CodeBlock] Highlighting failed for language: ${language}`, error);
     // Fallback: try auto-detection
     try {
       const result = hljs.highlightAuto(code);
