@@ -1,7 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import path from 'path';
+import { promises as fs } from 'fs';
+import { nanoid } from 'nanoid';
 import { db } from '@/lib/db';
 import { createUploadService } from '@agentic-sdk/services/attempt/attempt-file-upload-storage';
+import { TEMP_DIR } from '@/lib/file-utils';
 
 const uploadsDir = path.join(
   process.env.DATA_DIR || path.join(process.env.CLAUDE_WS_USER_CWD || process.cwd(), 'data'),
@@ -27,27 +30,54 @@ export async function GET(request: NextRequest) {
   }
 }
 
-// POST /api/uploads - Upload a file for an attempt
+// POST /api/uploads - Upload a file for an attempt or to temp storage
 export async function POST(request: NextRequest) {
   try {
     const formData = await request.formData();
     const attemptId = formData.get('attemptId') as string;
     const file = formData.get('file') as File;
 
-    if (!attemptId || !file) {
-      return NextResponse.json({ error: 'attemptId and file are required' }, { status: 400 });
+    if (!file) {
+      return NextResponse.json({ error: 'File is required' }, { status: 400 });
     }
 
     const buffer = Buffer.from(await file.arrayBuffer());
-    const record = await uploadService.save(attemptId, {
-      filename: file.name,
+
+    // If attemptId is provided and looks like a real ID (not local temporary), save to attempt folder
+    if (attemptId && !attemptId.startsWith('local-')) {
+      const record = await uploadService.save(attemptId, {
+        filename: file.name,
+        originalName: file.name,
+        mimeType: file.type,
+        size: file.size,
+        buffer,
+      });
+
+      return NextResponse.json(record, { status: 201 });
+    }
+
+    // Otherwise, save to temporary storage
+    await fs.mkdir(TEMP_DIR, { recursive: true });
+
+    const tempId = nanoid();
+    const ext = path.extname(file.name);
+    // Pattern expected by file-processor: {tempId}-{timestamp}.{ext}
+    const tempFilename = `${tempId}-${Date.now()}${ext}`;
+    const tempPath = path.join(TEMP_DIR, tempFilename);
+    const relativePath = path.relative(process.cwd(), tempPath);
+
+    await fs.writeFile(tempPath, buffer);
+
+    // Return a temporary record that matches AttemptFile structure but with tempId
+    return NextResponse.json({
+      id: tempId,
+      tempId,
+      filename: tempFilename,
       originalName: file.name,
       mimeType: file.type,
       size: file.size,
-      buffer,
-    });
-
-    return NextResponse.json(record, { status: 201 });
+      path: relativePath,
+    }, { status: 201 });
   } catch (error) {
     console.error('Upload failed:', error);
     return NextResponse.json({ error: 'Failed to upload file' }, { status: 500 });

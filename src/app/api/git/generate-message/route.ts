@@ -4,6 +4,7 @@ import { promisify } from 'util';
 import path from 'path';
 import fs from 'fs';
 import { cliQuery } from '@/lib/cli-query';
+import { resolveModel } from '@/lib/providers/claude-sdk-model-alias-and-server-command-utils';
 
 const execFileAsync = promisify(execFile);
 
@@ -14,7 +15,7 @@ const GIT_TIMEOUT = 5000;
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { projectPath } = body;
+    const { projectPath, effort } = body;
 
     if (!projectPath) {
       return NextResponse.json(
@@ -98,7 +99,8 @@ export async function POST(request: NextRequest) {
       const result = await cliQuery({
         prompt,
         cwd: resolvedPath,
-        model: 'claude-haiku-4-5-20251001', // Use Haiku for fast commit messages
+        model: resolveModel('claude-haiku-4-5-20251001'), // Use Haiku for fast commit messages
+        effort: effort || 'low', // Default to low for speed/efficiency
       });
 
       const { title, description } = extractCommitMessage(result.text);
@@ -128,13 +130,13 @@ export async function POST(request: NextRequest) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       const isRateLimitError = errorMessage.toLowerCase().includes('rate limit');
       const isAuthError = errorMessage.toLowerCase().includes('api key') ||
-                          errorMessage.toLowerCase().includes('unauthorized');
+        errorMessage.toLowerCase().includes('unauthorized');
 
       return NextResponse.json(
         {
           error: isRateLimitError ? 'Rate limit exceeded. Try again later.' :
-                 isAuthError ? 'API authentication failed. Check server configuration.' :
-                 'Failed to generate commit message',
+            isAuthError ? 'API authentication failed. Check server configuration.' :
+              'Failed to generate commit message',
         },
         { status: isRateLimitError ? 429 : isAuthError ? 401 : 500 }
       );

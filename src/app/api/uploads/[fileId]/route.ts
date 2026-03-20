@@ -24,11 +24,33 @@ export async function GET(
       return NextResponse.json({ error: 'File not found' }, { status: 404 });
     }
 
-    const filePath = path.join(uploadsDir, record.filename);
-    const buffer = await readFile(filePath);
+    // Try multiple possible paths for the file:
+    // 1. Direct upload: data/uploads/[filename]
+    // 2. Processed attachment: data/uploads/[attemptId]/[filename]
+    const rootPath = path.join(uploadsDir, record.filename);
+    const subDirPath = path.join(uploadsDir, record.attemptId, record.filename);
+
+    let buffer: Buffer;
+    let finalPath = '';
+
+    try {
+      // Prefer root path (direct uploads)
+      buffer = await readFile(rootPath);
+      finalPath = rootPath;
+    } catch (e) {
+      // Fallback to subdirectory (processed attachments)
+      try {
+        buffer = await readFile(subDirPath);
+        finalPath = subDirPath;
+      } catch (subDirError) {
+        console.error(`File not found at ${rootPath} or ${subDirPath}`);
+        return NextResponse.json({ error: 'File not found on disk' }, { status: 404 });
+      }
+    }
+
     const mimeType = record.mimeType || getMimeType(record.filename);
 
-    return new Response(buffer, {
+    return new Response(new Uint8Array(buffer), {
       headers: {
         'Content-Type': mimeType,
         'Content-Disposition': `inline; filename="${record.originalName}"`,

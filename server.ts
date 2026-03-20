@@ -546,7 +546,7 @@ app.prepare().then(async () => {
 
             log.warn(`[Server] Auto-retried answer for ${attemptId} as new attempt ${newAttemptId}`);
           } catch (error) {
-            log.error({error},`[Server] Auto-retry failed for ${attemptId}:`);
+            log.error({ error }, `[Server] Auto-retry failed for ${attemptId}:`);
             socket.emit('error', { message: 'Auto-retry failed: ' + (error instanceof Error ? error.message : 'Unknown error') });
           }
         }
@@ -1250,6 +1250,7 @@ app.prepare().then(async () => {
         .limit(1);
 
       const autoCompactEnabled = autoCompactSetting.length > 0 && autoCompactSetting[0].value === 'true';
+      const attempt = await db.query.attempts.findFirst({ where: eq(schema.attempts.id, attemptId) });
 
       io.to(`attempt:${attemptId}`).emit('context:prompt-too-long', {
         attemptId,
@@ -1258,6 +1259,26 @@ app.prepare().then(async () => {
           ? 'Context limit exceeded. Auto-compacting...'
           : 'Context limit exceeded. Use /compact to reduce context size, or start a new conversation.',
       });
+
+      if (autoCompactEnabled && attempt) {
+        const project = await db.query.projects.findFirst({
+          where: eq(schema.projects.id, (await db.query.tasks.findFirst({ where: eq(schema.tasks.id, attempt.taskId) }))!.projectId),
+        });
+
+        if (project) {
+          const conversationSummary = await sessionManager.getConversationSummary(attempt.taskId);
+          const compactAttemptId = nanoid();
+          await db.insert(schema.attempts).values({
+            id: compactAttemptId,
+            taskId: attempt.taskId,
+            prompt: 'Auto-compact: prompt too long',
+            displayPrompt: 'Auto-compacting context...',
+            status: 'running',
+          });
+          log.info({ attemptId: compactAttemptId, taskId: attempt.taskId }, '[Server] Auto-compacting after prompt too long');
+          agentManager.compact({ attemptId: compactAttemptId, projectPath: project.path, conversationSummary });
+        }
+      }
     } catch (error) {
       log.error({ error }, '[Server] Failed to handle prompt-too-long');
     }
@@ -1391,7 +1412,8 @@ app.prepare().then(async () => {
     }
 
     // Auto-compact check: if context exceeded threshold and auto-compact is enabled
-    if (status === 'completed' && usageStats?.contextHealth?.shouldCompact && attempt?.taskId) {
+    // Trigger on both 'completed' and 'failed' to prevent getting stuck in a high-context state
+    if ((status === 'completed' || status === 'failed') && usageStats?.contextHealth?.shouldCompact && attempt?.taskId) {
       try {
         const autoCompactSetting = await db
           .select()
@@ -1497,9 +1519,9 @@ app.prepare().then(async () => {
               taskTitle: task?.title || 'Unknown',
               summary: expanded.summary,
             });
-          }).catch(() => {});
+          }).catch(() => { });
         }
-      }).catch(() => {});
+      }).catch(() => { });
     }
   });
 

@@ -46,7 +46,9 @@ async function uploadFile(
 
   try {
     const formData = new FormData();
-    formData.append('files', pendingFile.file);
+    formData.append('file', pendingFile.file);
+    // Note: attemptId is omitted here because pre-submission attachments are saved 
+    // to temporary storage and linked to the attempt later via the socket service.
     const res = await fetch('/api/uploads', { method: 'POST', body: formData });
 
     if (!res.ok) {
@@ -54,15 +56,16 @@ async function uploadFile(
       throw new Error(error.error || `Upload failed: ${res.statusText}`);
     }
 
-    const data = await res.json();
-    const uploaded = data.files[0];
+    const uploaded = await res.json();
+    // Support both permanent records (id) and temporary records (tempId)
+    const serverId = uploaded.tempId || uploaded.id;
 
     set((state) => ({
       pendingFilesByTask: {
         ...state.pendingFilesByTask,
         [taskId]: (state.pendingFilesByTask[taskId] || []).map((f) =>
           f.tempId === localTempId
-            ? { ...f, tempId: uploaded.tempId, status: 'uploaded' as const, file: undefined }
+            ? { ...f, tempId: serverId, status: 'uploaded' as const, file: undefined }
             : f
         ),
       },

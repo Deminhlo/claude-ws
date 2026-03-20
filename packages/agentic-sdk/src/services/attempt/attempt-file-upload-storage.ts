@@ -59,8 +59,24 @@ export function createUploadService(db: any, uploadsDir: string) {
 
     /** Delete the entire upload directory for an attempt (used during task deletion) */
     async cleanupAttemptFiles(attemptId: string) {
+      // 1. Delete the attempt-specific subdirectory (processed attachments)
       const attemptDir = path.join(uploadsDir, attemptId);
-      await fs.rm(attemptDir, { recursive: true, force: true });
+      await fs.rm(attemptDir, { recursive: true, force: true }).catch(() => { });
+
+      // 2. Delete files in root that belong to this attempt (direct uploads)
+      try {
+        const files = await fs.readdir(uploadsDir).catch(() => []);
+        const records = await db.select().from(schema.attemptFiles)
+          .where(eq(schema.attemptFiles.attemptId, attemptId))
+          .all();
+
+        for (const record of records) {
+          const rootPath = path.join(uploadsDir, record.filename);
+          await fs.unlink(rootPath).catch(() => { });
+        }
+      } catch (err) {
+        // Ignore listing errors
+      }
     },
   };
 }

@@ -267,6 +267,32 @@ export function initDb() {
       // Column already exists
     }
   }
+
+  // Initialize default settings
+  seedDefaultSettings(sqlite);
+}
+
+/**
+ * Seed default settings if they don't exist
+ */
+function seedDefaultSettings(db: Database.Database) {
+  try {
+    // Enable auto-compact by default to prevent "Prompt too long" errors
+    const autoCompact = db.prepare('SELECT value FROM app_settings WHERE key = ?').get('auto_compact_enabled');
+    if (!autoCompact) {
+      db.prepare('INSERT INTO app_settings (key, value, updated_at) VALUES (?, ?, ?)')
+        .run('auto_compact_enabled', 'true', Date.now());
+    }
+
+    // Seed default context limit (160k as a safer default for proxies / Gemini 2.0 Flash)
+    const contextLimit = db.prepare('SELECT value FROM app_settings WHERE key = ?').get('context_limit');
+    if (!contextLimit) {
+      db.prepare('INSERT INTO app_settings (key, value, updated_at) VALUES (?, ?, ?)')
+        .run('context_limit', '160000', Date.now());
+    }
+  } catch (error) {
+    console.error('Failed to seed default settings:', error);
+  }
 }
 
 // Initialize on first import

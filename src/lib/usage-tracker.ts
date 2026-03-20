@@ -91,6 +91,7 @@ class UsageTracker extends EventEmitter {
   /** Initialize or get usage stats for an attempt */
   initSession(attemptId: string): UsageStats {
     if (!this.sessions.has(attemptId)) {
+      const envLimit = process.env.CLAUDE_WS_CONTEXT_LIMIT ? parseInt(process.env.CLAUDE_WS_CONTEXT_LIMIT, 10) : null;
       const stats: UsageStats = {
         totalInputTokens: 0,
         totalOutputTokens: 0,
@@ -102,7 +103,7 @@ class UsageTracker extends EventEmitter {
         durationMs: 0,
         durationApiMs: 0,
         contextUsed: 0,
-        contextLimit: 200000,
+        contextLimit: envLimit || 160000,
         contextPercentage: 0,
         baselineContext: 0,
         modelUsage: {},

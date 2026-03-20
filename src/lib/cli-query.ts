@@ -31,17 +31,17 @@ export function findClaudePath(): string | undefined {
 
   const candidates = isWindows
     ? [
-        join(home, '.local', 'bin', 'claude.exe'),
-        join(home, 'AppData', 'Roaming', 'npm', 'claude.cmd'),
-        join(home, 'AppData', 'Local', 'Programs', 'claude', 'claude.exe'),
-        sdkCli,
-      ]
+      join(home, '.local', 'bin', 'claude.exe'),
+      join(home, 'AppData', 'Roaming', 'npm', 'claude.cmd'),
+      join(home, 'AppData', 'Local', 'Programs', 'claude', 'claude.exe'),
+      sdkCli,
+    ]
     : [
-        `/home/${process.env.USER || 'user'}/.local/bin/claude`,
-        '/usr/local/bin/claude',
-        '/opt/homebrew/bin/claude',
-        sdkCli,
-      ];
+      `/home/${process.env.USER || 'user'}/.local/bin/claude`,
+      '/usr/local/bin/claude',
+      '/opt/homebrew/bin/claude',
+      sdkCli,
+    ];
 
   const found = candidates.find(p => existsSync(p));
   if (found) return found;
@@ -62,6 +62,7 @@ export interface CliQueryOptions {
   prompt: string;
   cwd: string;
   model?: string; // Full model ID (e.g., 'claude-sonnet-4-5-20250929')
+  effort?: 'auto' | 'low' | 'medium' | 'high';
   onDelta?: (text: string) => void;
   signal?: AbortSignal;
   maxTurns?: number;
@@ -77,7 +78,7 @@ export interface CliQueryResult {
  * Spawns `claude -p <prompt>` with stream-json output and accumulates the response.
  */
 export async function cliQuery(options: CliQueryOptions): Promise<CliQueryResult> {
-  const { prompt, cwd, model, onDelta, signal, maxTurns } = options;
+  const { prompt, cwd, model, effort, onDelta, signal, maxTurns } = options;
 
   const claudePath = findClaudePath();
   if (!claudePath) {
@@ -93,6 +94,10 @@ export async function cliQuery(options: CliQueryOptions): Promise<CliQueryResult
 
   if (model) {
     args.push('--model', model);
+  }
+
+  if (effort) {
+    args.push('--effort', effort);
   }
 
   if (maxTurns) {
@@ -113,10 +118,10 @@ export async function cliQuery(options: CliQueryOptions): Promise<CliQueryResult
           TERM: 'dumb',
           PATH: process.platform === 'win32'
             ? (process.env.PATH || '').split(';').filter(p => {
-                const lp = p.toLowerCase().trim().replace(/\//g, '\\');
-                return !lp.startsWith('c:\\windows') &&
-                  !lp.startsWith('c:\\program files (x86)\\windows kits');
-              }).join(';')
+              const lp = p.toLowerCase().trim().replace(/\//g, '\\');
+              return !lp.startsWith('c:\\windows') &&
+                !lp.startsWith('c:\\program files (x86)\\windows kits');
+            }).join(';')
             : `${process.env.PATH}:/opt/homebrew/bin:/usr/local/bin`,
         },
       });

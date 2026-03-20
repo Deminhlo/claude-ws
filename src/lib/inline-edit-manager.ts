@@ -8,6 +8,7 @@
 
 import { EventEmitter } from 'events';
 import { cliQuery } from './cli-query';
+import { resolveModel } from './providers/claude-sdk-model-alias-and-server-command-utils';
 import { generateLineDiff, type DiffResult } from './diff-generator';
 import { createLogger } from './logger';
 import { buildInlineEditPrompt, extractCodeFromResponse } from './inline-edit-prompt-builder';
@@ -26,6 +27,7 @@ export interface InlineEditRequest {
   instruction: string;
   beforeContext?: string; // Lines before selection for context
   afterContext?: string; // Lines after selection for context
+  effort?: 'auto' | 'low' | 'medium' | 'high';
   maxTurns?: number;  // Max conversation turns (undefined = unlimited)
 }
 
@@ -65,7 +67,7 @@ class InlineEditManager extends EventEmitter {
    * Start an inline edit session
    */
   async startEdit(request: InlineEditRequest): Promise<void> {
-    const { sessionId, basePath, filePath, language, selectedCode, instruction, beforeContext, afterContext, maxTurns } =
+    const { sessionId, basePath, filePath, language, selectedCode, instruction, beforeContext, afterContext, effort, maxTurns } =
       request;
 
     // Cancel existing session if any
@@ -91,7 +93,8 @@ class InlineEditManager extends EventEmitter {
       const result = await cliQuery({
         prompt,
         cwd: basePath,
-        model: 'claude-sonnet-4-5-20250929', // Use Sonnet for faster inline edits
+        model: resolveModel('claude-sonnet-4-5-20250929'), // Use Sonnet for faster inline edits
+        effort: effort || 'auto', // Default to auto for intelligent effort selection
         signal: controller.signal,
         maxTurns,
         onDelta: (text) => {

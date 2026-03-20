@@ -74,7 +74,7 @@
     "agentic-sdk:start": "cross-env NODE_ENV=production tsx packages/agentic-sdk/bin/server-entrypoint.ts"
   },
   "dependencies": {
-    "@anthropic-ai/claude-agent-sdk": "^0.2.42",
+    "@anthropic-ai/claude-agent-sdk": "^0.2.80",
     "@anthropic-ai/sdk": "^0.71.2",
     "@codemirror/lang-cpp": "^6.0.3",
     "@codemirror/lang-css": "^6.3.1",
